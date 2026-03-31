@@ -68,3 +68,78 @@ async def get_vscode_status() -> dict[str, bool | str]:
     except Exception as e:
         logger.error(f"Error getting VSCode status: {e}")
         raise HTTPException(status_code=500, detail="Failed to get VSCode status")
+
+
+@vscode_router.get("/health")
+async def get_vscode_health() -> dict[str, bool]:
+    """Check if VSCode server is actually responsive.
+
+    Unlike /status which only checks if the process is running,
+    this endpoint performs an HTTP request to verify the server
+    can actually respond to requests.
+
+    Returns:
+        Dictionary with healthy status and enabled status
+    """
+    vscode_service = get_vscode_service()
+    if vscode_service is None:
+        return {"healthy": False, "enabled": False}
+
+    try:
+        healthy = await vscode_service.health_check()
+        return {"healthy": healthy, "enabled": True}
+    except Exception as e:
+        logger.error(f"Error checking VSCode health: {e}")
+        raise HTTPException(status_code=500, detail="Failed to check VSCode health")
+
+
+@vscode_router.post("/restart")
+async def restart_vscode() -> dict[str, bool]:
+    """Restart the VSCode server.
+
+    This stops the current VSCode process (if running) and starts a new one.
+    Useful when VSCode becomes unresponsive.
+
+    Returns:
+        Dictionary indicating if restart was successful
+    """
+    vscode_service = get_vscode_service()
+    if vscode_service is None:
+        raise HTTPException(
+            status_code=503,
+            detail="VSCode is disabled in configuration",
+        )
+
+    try:
+        success = await vscode_service.restart()
+        return {"restarted": success}
+    except Exception as e:
+        logger.error(f"Error restarting VSCode: {e}")
+        raise HTTPException(status_code=500, detail="Failed to restart VSCode")
+
+
+@vscode_router.post("/restart-if-unhealthy")
+async def restart_vscode_if_unhealthy() -> dict[str, bool]:
+    """Check VSCode health and restart if unresponsive.
+
+    This performs a health check and only restarts if VSCode
+    is not responding. Returns whether a restart was performed.
+
+    Returns:
+        Dictionary indicating if restart was needed and successful
+    """
+    vscode_service = get_vscode_service()
+    if vscode_service is None:
+        raise HTTPException(
+            status_code=503,
+            detail="VSCode is disabled in configuration",
+        )
+
+    try:
+        restarted = await vscode_service.restart_if_unhealthy()
+        return {"restarted": restarted, "was_healthy": not restarted}
+    except Exception as e:
+        logger.error(f"Error in restart-if-unhealthy: {e}")
+        raise HTTPException(
+            status_code=500, detail="Failed to check/restart VSCode"
+        )
