@@ -58,6 +58,8 @@ async def api_lifespan(api: FastAPI) -> AsyncIterator[None]:
             vscode_started = await vscode_service.start()
             if vscode_started:
                 logger.info("VSCode service started successfully")
+                # Start the watchdog to monitor VSCode health and auto-restart if needed
+                await vscode_service.start_watchdog()
             else:
                 logger.warning(
                     "VSCode service failed to start, continuing without VSCode"
@@ -122,6 +124,7 @@ async def api_lifespan(api: FastAPI) -> AsyncIterator[None]:
             # Define async functions for stopping each service
             async def stop_vscode_service():
                 if vscode_service is not None:
+                    await vscode_service.stop_watchdog()
                     await vscode_service.stop()
 
             async def stop_desktop_service():
