@@ -3,7 +3,7 @@ name: Agent Server
 
 on:
     push:
-        branches: [main]
+        branches: [main, my]
         tags:
             - '*'  # Trigger on any tag (e.g., 1.0.0, 1.0.0a5, build-docker)
     pull_request:
@@ -17,7 +17,7 @@ on:
             image:
                 description: GHCR image name
                 type: string
-                default: ghcr.io/openhands/agent-server
+                default: ghcr.io/gpothier/agent-server
             platforms:
                 description: Target platforms
                 type: string
@@ -203,7 +203,7 @@ jobs:
         runs-on: ${{ matrix.runner }}
 
         env:
-            IMAGE: ${{ inputs.image != '' && inputs.image || 'ghcr.io/openhands/agent-server' }}
+            IMAGE: ${{ inputs.image != '' && inputs.image || 'ghcr.io/gpothier/agent-server' }}
             BASE_IMAGE: ${{ inputs.base_image != '' && inputs.base_image || matrix.base_image }}
             CUSTOM_TAGS: ${{ matrix.variant }}
             VARIANT: ${{ matrix.variant }}
@@ -337,7 +337,7 @@ jobs:
             matrix:
                 variant: [python, java, golang]
         env:
-            IMAGE: ${{ inputs.image != '' && inputs.image || 'ghcr.io/openhands/agent-server' }}
+            IMAGE: ${{ inputs.image != '' && inputs.image || 'ghcr.io/gpothier/agent-server' }}
 
         steps:
             - name: Download build info to extract SHORT_SHA
@@ -398,6 +398,21 @@ jobs:
                       echo "✓ Latest multi-arch manifest created: ${IMAGE}:${LATEST_TAG}"
                       
                       MANIFEST_TAG="${MANIFEST_TAG},${LATEST_TAG}"
+                  fi
+
+                  # Create branch-named manifest if on my branch
+                  if [ "${{ github.ref }}" == "refs/heads/my" ]; then
+                      BRANCH_TAG="my-${VARIANT}"
+                      echo "Creating branch manifest: ${IMAGE}:${BRANCH_TAG}"
+                      docker buildx imagetools create -t ${IMAGE}:${BRANCH_TAG} \
+                        ${IMAGE}:${SHORT_SHA}-${VARIANT}-amd64 \
+                        ${IMAGE}:${SHORT_SHA}-${VARIANT}-arm64
+                      
+                      echo "Inspecting branch manifest:"
+                      docker buildx imagetools inspect ${IMAGE}:${BRANCH_TAG}
+                      echo "✓ Branch manifest created: ${IMAGE}:${BRANCH_TAG}"
+                      
+                      MANIFEST_TAG="${MANIFEST_TAG},${BRANCH_TAG}"
                   fi
 
                   # Create versioned manifests if triggered by a git tag
