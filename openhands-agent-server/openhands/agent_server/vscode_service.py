@@ -4,11 +4,18 @@ import asyncio
 import os
 from pathlib import Path
 
+import aiohttp
+
 from openhands.sdk.logger import get_logger
 from openhands.sdk.utils import sanitized_env
 
 
 logger = get_logger(__name__)
+
+# Default health check settings
+DEFAULT_HEALTH_CHECK_TIMEOUT = 5.0
+DEFAULT_WATCHDOG_INTERVAL = 60.0
+DEFAULT_CONSECUTIVE_FAILURES_THRESHOLD = 3
 
 
 class VSCodeService:
@@ -35,6 +42,8 @@ class VSCodeService:
         self.process: asyncio.subprocess.Process | None = None
         self.openvscode_server_root: Path = Path("/openhands/.openvscode-server")
         self.extensions_dir: Path = self.openvscode_server_root / "extensions"
+        self._watchdog_task: asyncio.Task | None = None
+        self._consecutive_failures: int = 0
 
     async def start(self) -> bool:
         """Start the VSCode server.
@@ -110,12 +119,145 @@ class VSCodeService:
         return f"{base_url}/?tkn={self.connection_token}&folder={workspace_dir}"
 
     def is_running(self) -> bool:
-        """Check if VSCode server is running.
+        """Check if VSCode server process is running.
+
+        Note: This only checks if the process exists and hasn't exited.
+        Use health_check() to verify the server is actually responsive.
 
         Returns:
-            True if running, False otherwise
+            True if process is running, False otherwise
         """
         return self.process is not None and self.process.returncode is None
+
+    async def health_check(
+        self, timeout: float = DEFAULT_HEALTH_CHECK_TIMEOUT
+    ) -> bool:
+        """Check if VSCode server is actually responsive.
+
+        This performs an HTTP request to verify the server can respond,
+        not just that the process is running.
+
+        Args:
+            timeout: Timeout for the health check request in seconds
+
+        Returns:
+            True if VSCode responds to HTTP requests, False otherwise
+        """
+        if not self.is_running():
+            return False
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                url = f"http://localhost:{self.port}/"
+                async with session.get(
+                    url, timeout=aiohttp.ClientTimeout(total=timeout)
+                ) as resp:
+                    # VSCode returns 200 or 302 (redirect to auth page)
+                    return resp.status in (200, 302)
+        except asyncio.TimeoutError:
+            logger.warning(f"VSCode health check timed out after {timeout}s")
+            return False
+        except aiohttp.ClientError as e:
+            logger.warning(f"VSCode health check failed: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error during VSCode health check: {e}")
+            return False
+
+    async def restart(self) -> bool:
+        """Restart the VSCode server.
+
+        Returns:
+            True if restart was successful, False otherwise
+        """
+        logger.info("Restarting VSCode server...")
+        await self.stop()
+        self._consecutive_failures = 0
+        return await self.start()
+
+    async def restart_if_unhealthy(
+        self, timeout: float = DEFAULT_HEALTH_CHECK_TIMEOUT
+    ) -> bool:
+        """Check health and restart VSCode if it's unresponsive.
+
+        Args:
+            timeout: Timeout for the health check request in seconds
+
+        Returns:
+            True if restart was needed and successful, False if healthy or restart failed
+        """
+        if await self.health_check(timeout):
+            self._consecutive_failures = 0
+            return False
+
+        logger.warning("VSCode server is unresponsive, initiating restart...")
+        return await self.restart()
+
+    async def start_watchdog(
+        self,
+        check_interval: float = DEFAULT_WATCHDOG_INTERVAL,
+        failure_threshold: int = DEFAULT_CONSECUTIVE_FAILURES_THRESHOLD,
+    ) -> None:
+        """Start a background watchdog task that monitors VSCode health.
+
+        The watchdog periodically checks if VSCode is responsive and
+        automatically restarts it after consecutive failures exceed the threshold.
+
+        Args:
+            check_interval: Seconds between health checks
+            failure_threshold: Number of consecutive failures before restart
+        """
+        if self._watchdog_task is not None:
+            logger.warning("Watchdog already running")
+            return
+
+        async def watchdog_loop():
+            logger.info(
+                f"VSCode watchdog started (interval={check_interval}s, "
+                f"threshold={failure_threshold})"
+            )
+            while True:
+                try:
+                    await asyncio.sleep(check_interval)
+
+                    if not self.is_running():
+                        logger.debug("VSCode process not running, watchdog skipping")
+                        continue
+
+                    if await self.health_check():
+                        self._consecutive_failures = 0
+                    else:
+                        self._consecutive_failures += 1
+                        logger.warning(
+                            f"VSCode health check failed "
+                            f"({self._consecutive_failures}/{failure_threshold})"
+                        )
+
+                        if self._consecutive_failures >= failure_threshold:
+                            logger.error(
+                                f"VSCode failed {failure_threshold} consecutive "
+                                "health checks, restarting..."
+                            )
+                            await self.restart()
+
+                except asyncio.CancelledError:
+                    logger.info("VSCode watchdog stopped")
+                    break
+                except Exception as e:
+                    logger.error(f"Error in VSCode watchdog: {e}")
+
+        self._watchdog_task = asyncio.create_task(watchdog_loop())
+
+    async def stop_watchdog(self) -> None:
+        """Stop the background watchdog task."""
+        if self._watchdog_task is not None:
+            self._watchdog_task.cancel()
+            try:
+                await self._watchdog_task
+            except asyncio.CancelledError:
+                pass
+            self._watchdog_task = None
+            logger.info("VSCode watchdog stopped")
 
     def _check_vscode_available(self) -> bool:
         """Check if VSCode server binary is available.
