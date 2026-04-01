@@ -370,14 +370,17 @@ jobs:
               run: |
                   SHORT_SHA=${{ steps.get_sha.outputs.short_sha }}
                   VARIANT=${{ matrix.variant }}
+                  # When TARGET != binary, images have -${TARGET} suffix (e.g., -source)
+                  # This must match the build job's TARGET setting
+                  TARGET_SUFFIX="-source"
                   MANIFEST_TAG="${SHORT_SHA}-${VARIANT}"
 
                   # Create multi-arch manifest combining amd64 and arm64 using buildx imagetools
                   # This properly handles manifest lists from Docker builds
                   echo "Creating multi-arch manifest: ${IMAGE}:${MANIFEST_TAG}"
                   docker buildx imagetools create -t ${IMAGE}:${MANIFEST_TAG} \
-                    ${IMAGE}:${SHORT_SHA}-${VARIANT}-amd64 \
-                    ${IMAGE}:${SHORT_SHA}-${VARIANT}-arm64
+                    ${IMAGE}:${SHORT_SHA}-${VARIANT}-amd64${TARGET_SUFFIX} \
+                    ${IMAGE}:${SHORT_SHA}-${VARIANT}-arm64${TARGET_SUFFIX}
 
                   # Verify the multi-arch manifest
                   echo "Inspecting multi-arch manifest:"
@@ -390,8 +393,8 @@ jobs:
                       LATEST_TAG="latest-${VARIANT}"
                       echo "Creating latest multi-arch manifest: ${IMAGE}:${LATEST_TAG}"
                       docker buildx imagetools create -t ${IMAGE}:${LATEST_TAG} \
-                        ${IMAGE}:main-${VARIANT}-amd64 \
-                        ${IMAGE}:main-${VARIANT}-arm64
+                        ${IMAGE}:main-${VARIANT}-amd64${TARGET_SUFFIX} \
+                        ${IMAGE}:main-${VARIANT}-arm64${TARGET_SUFFIX}
                       
                       echo "Inspecting latest multi-arch manifest:"
                       docker buildx imagetools inspect ${IMAGE}:${LATEST_TAG}
@@ -405,8 +408,8 @@ jobs:
                       BRANCH_TAG="my-${VARIANT}"
                       echo "Creating branch manifest: ${IMAGE}:${BRANCH_TAG}"
                       docker buildx imagetools create -t ${IMAGE}:${BRANCH_TAG} \
-                        ${IMAGE}:${SHORT_SHA}-${VARIANT}-amd64 \
-                        ${IMAGE}:${SHORT_SHA}-${VARIANT}-arm64
+                        ${IMAGE}:${SHORT_SHA}-${VARIANT}-amd64${TARGET_SUFFIX} \
+                        ${IMAGE}:${SHORT_SHA}-${VARIANT}-arm64${TARGET_SUFFIX}
                       
                       echo "Inspecting branch manifest:"
                       docker buildx imagetools inspect ${IMAGE}:${BRANCH_TAG}
