@@ -208,7 +208,7 @@ jobs:
             CUSTOM_TAGS: ${{ matrix.variant }}
             VARIANT: ${{ matrix.variant }}
             ARCH: ${{ matrix.arch }}
-            TARGET: binary
+            TARGET: source
             PLATFORM: ${{ matrix.platform }}
             # Use PR head SHA for pull requests to match the image tag expected by run-examples.yml
             GITHUB_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
