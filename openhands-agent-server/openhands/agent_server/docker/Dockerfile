@@ -235,16 +235,23 @@ RUN set -eux; \
     apt-get clean; rm -rf /var/lib/apt/lists/*; \
     # Create SSH runtime directory
     mkdir -p /run/sshd; \
+    chmod 755 /run/sshd; \
     # Generate host keys
     ssh-keygen -A; \
+    # Make host keys readable by openhands user so sshd can run without root
+    chmod 644 /etc/ssh/ssh_host_*_key.pub; \
+    chmod 640 /etc/ssh/ssh_host_*_key; \
+    chgrp ${USERNAME} /etc/ssh/ssh_host_*_key; \
     # Configure sshd for both password and public key authentication
     sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config; \
     sed -i 's/#PermitEmptyPasswords no/PermitEmptyPasswords no/' /etc/ssh/sshd_config; \
     sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config; \
     sed -i 's/#AuthorizedKeysFile/AuthorizedKeysFile/' /etc/ssh/sshd_config; \
-    # Configure SSH to listen on custom port
+    # Configure SSH to listen on custom port (non-privileged port, no root needed)
     sed -i "s/#Port 22/Port ${SSH_PORT}/" /etc/ssh/sshd_config; \
     echo "Port ${SSH_PORT}" >> /etc/ssh/sshd_config; \
+    # Allow sshd to run on non-privileged port without root
+    sed -i 's/#UsePAM yes/UsePAM no/' /etc/ssh/sshd_config; \
     # Set password for openhands user (password: "openhands")
     echo "${USERNAME}:openhands" | chpasswd; \
     # Create SSH directory for openhands user
