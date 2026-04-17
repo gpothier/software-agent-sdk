@@ -230,6 +230,11 @@ RUN set -eux; \
 RUN mkdir -p /etc/docker && \
     echo '{"mtu": 1450}' > /etc/docker/daemon.json
 
+# Configure docker.socket to be accessible by non-root users.
+# This is needed for Firecracker VMs where the openhands user needs docker access.
+RUN mkdir -p /etc/systemd/system/docker.socket.d && \
+    printf '[Socket]\nSocketMode=0666\n' > /etc/systemd/system/docker.socket.d/override.conf
+
 # --- GitHub CLI ---
 RUN set -eux; \
     mkdir -p -m 755 /etc/apt/keyrings; \
