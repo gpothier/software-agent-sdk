@@ -74,20 +74,34 @@ class SSHService:
             True if started successfully, False otherwise
         """
         try:
+            # Always set up authorized_keys if SSH keys are provided.
+            # This ensures keys are available even if sshd is started externally
+            # (e.g., by systemd in Firecracker VMs) or if we can't start sshd ourselves.
+            num_keys = self._setup_authorized_keys()
+
             # Check if sshd binary exists
             if not self._check_sshd_available():
-                logger.warning("sshd binary not found, SSH will be disabled")
+                if num_keys > 0:
+                    logger.info(
+                        f"SSH keys configured ({num_keys} key(s)), "
+                        "but sshd binary not found - keys will be used if sshd is started externally"
+                    )
+                else:
+                    logger.warning("sshd binary not found, SSH will be disabled")
                 return False
 
             # Check if port is available
             if not await self._is_port_available():
-                logger.warning(
-                    f"Port {self.port} is not available, SSH will be disabled"
-                )
+                if num_keys > 0:
+                    logger.info(
+                        f"SSH keys configured ({num_keys} key(s)), "
+                        f"but port {self.port} already in use - sshd may already be running"
+                    )
+                else:
+                    logger.warning(
+                        f"Port {self.port} is not available, SSH will be disabled"
+                    )
                 return False
-
-            # Set up authorized_keys from environment variable
-            num_keys = self._setup_authorized_keys()
 
             # Start sshd in the foreground (will be managed by this process)
             await self._start_sshd_process()
