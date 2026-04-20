@@ -7,6 +7,7 @@ from importlib.metadata import version
 from fastapi import APIRouter, Response
 from pydantic import BaseModel, Field
 
+from openhands.agent_server.ssh_service import get_ssh_status
 from openhands.sdk.tool.registry import list_usable_tools
 from openhands.tools.terminal.timeout_policy import (
     get_max_foreground_timeout_seconds,
@@ -114,3 +115,27 @@ async def get_server_info() -> ServerInfo:
         uptime=int(now - _start_time),
         idle_time=int(now - _last_event_time),
     )
+
+
+class SSHStatus(BaseModel):
+    """SSH service status information."""
+
+    enabled: bool = Field(description="Whether SSH is enabled in server configuration")
+    running: bool = Field(description="Whether SSH server is currently running")
+    error: str | None = Field(
+        default=None,
+        description="Error message if SSH failed to start, or None if successful",
+    )
+    port: int = Field(description="The SSH port number")
+
+
+@server_details_router.get("/ssh_status")
+async def get_ssh_status_endpoint() -> SSHStatus:
+    """Get the current SSH service status.
+
+    Returns status information about the SSH service, including whether it's
+    running and any error messages. This can be used by the frontend to show
+    appropriate error messages when users try to connect via SSH.
+    """
+    status = get_ssh_status()
+    return SSHStatus(**status)

@@ -50,6 +50,7 @@ from openhands.agent_server.server_details_router import (
 from openhands.agent_server.settings_router import settings_router
 from openhands.agent_server.skills_router import skills_router
 from openhands.agent_server.sockets import sockets_router
+from openhands.agent_server.ssh_service import get_ssh_service
 from openhands.agent_server.tool_preload_service import get_tool_preload_service
 from openhands.agent_server.tool_router import tool_router
 from openhands.agent_server.vscode_router import vscode_router
@@ -239,11 +240,16 @@ async def api_lifespan(api: FastAPI) -> AsyncIterator[None]:
                     if tool_preload_service is not None:
                         await tool_preload_service.stop()
 
+                async def stop_ssh_service():
+                    if ssh_service is not None:
+                        await ssh_service.stop()
+
                 # Stop all services concurrently
                 await asyncio.gather(
                     stop_vscode_service(),
                     stop_desktop_service(),
                     stop_tool_preload_service(),
+                    stop_ssh_service(),
                     return_exceptions=True,
                 )
     finally:
