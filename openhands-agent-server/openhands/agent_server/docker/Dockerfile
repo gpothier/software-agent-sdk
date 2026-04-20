@@ -274,14 +274,17 @@ RUN set -eux; \
     # Create SSH runtime directory
     mkdir -p /run/sshd; \
     chmod 755 /run/sshd; \
-    # Generate host keys
-    ssh-keygen -A; \
-    # Make host keys readable by openhands user so sshd can run without root
-    chmod 644 /etc/ssh/ssh_host_*_key.pub; \
-    chmod 640 /etc/ssh/ssh_host_*_key; \
-    chgrp ${USERNAME} /etc/ssh/ssh_host_*_key; \
-    # Configure sshd for both password and public key authentication
-    sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config; \
+    # Create host key directory with proper permissions for runtime key generation
+    mkdir -p /etc/ssh/host_keys; \
+    chmod 755 /etc/ssh/host_keys; \
+    chown ${USERNAME}:${USERNAME} /etc/ssh/host_keys; \
+    # Configure sshd to use host keys from writable directory (generated at container start)
+    echo "HostKey /etc/ssh/host_keys/ssh_host_ed25519_key" >> /etc/ssh/sshd_config; \
+    echo "HostKey /etc/ssh/host_keys/ssh_host_rsa_key" >> /etc/ssh/sshd_config; \
+    echo "HostKey /etc/ssh/host_keys/ssh_host_ecdsa_key" >> /etc/ssh/sshd_config; \
+    # Configure sshd for public key authentication only (no password auth)
+    sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config; \
+    sed -i 's/PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config; \
     sed -i 's/#PermitEmptyPasswords no/PermitEmptyPasswords no/' /etc/ssh/sshd_config; \
     sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config; \
     sed -i 's/#AuthorizedKeysFile/AuthorizedKeysFile/' /etc/ssh/sshd_config; \
@@ -290,8 +293,6 @@ RUN set -eux; \
     echo "Port ${SSH_PORT}" >> /etc/ssh/sshd_config; \
     # Allow sshd to run on non-privileged port without root
     sed -i 's/#UsePAM yes/UsePAM no/' /etc/ssh/sshd_config; \
-    # Set password for openhands user (password: "openhands")
-    echo "${USERNAME}:openhands" | chpasswd; \
     # Create SSH directory for openhands user
     mkdir -p /home/${USERNAME}/.ssh; \
     chmod 700 /home/${USERNAME}/.ssh; \
