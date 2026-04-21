@@ -773,6 +773,46 @@ def _find_git_repo_root(path: Path) -> Path | None:
     return None
 
 
+def _discover_git_repos(base_dir: Path, max_depth: int = 1) -> list[Path]:
+    """Find all git repository roots under base_dir.
+
+    Searches for directories containing a `.git` entry (directory or file,
+    to support worktrees/submodules). Does not shell out to `git`.
+
+    Args:
+        base_dir: Directory to search from (e.g., /workspace).
+        max_depth: How many levels deep to search. Default is 1, meaning
+            only immediate children of base_dir are checked.
+
+    Returns:
+        List of paths that are git repository roots, in discovery order.
+        The base_dir itself is included if it's a git repo.
+    """
+    git_roots: list[Path] = []
+
+    # Check if base_dir itself is a git repo
+    if (base_dir / ".git").exists():
+        git_roots.append(base_dir)
+
+    if max_depth <= 0:
+        return git_roots
+
+    # Search children
+    try:
+        for child in sorted(base_dir.iterdir()):
+            if not child.is_dir() or child.name.startswith("."):
+                continue
+            if (child / ".git").exists():
+                git_roots.append(child)
+            elif max_depth > 1:
+                # Recurse deeper
+                git_roots.extend(_discover_git_repos(child, max_depth - 1))
+    except PermissionError:
+        logger.debug(f"Permission denied accessing {base_dir}")
+
+    return git_roots
+
+
 def _merge_loaded_skills(
     *,
     source_dir: Path,
@@ -827,7 +867,11 @@ def _load_and_merge_from_dirs(
             logger.warning(f"Failed to load {source_label} from {skills_dir}: {str(e)}")
 
 
-def load_project_skills(work_dir: str | Path) -> list[Skill]:
+def load_project_skills(
+    work_dir: str | Path,
+    *,
+    discover_all_repos: bool = False,
+) -> list[Skill]:
     """Load skills from project-specific directories.
 
     Searches for skills in {work_dir}/.agents/skills/, {work_dir}/.openhands/skills/,
@@ -851,6 +895,10 @@ def load_project_skills(work_dir: str | Path) -> list[Skill]:
 
     Args:
         work_dir: Path to the project/working directory.
+        discover_all_repos: If True, discover and load skills from all git
+            repositories found under work_dir (depth=1), instead of just
+            loading from work_dir and its containing git root. This is useful
+            when multiple repositories are cloned in the same workspace.
 
     Returns:
         List of Skill objects loaded from project directories.
@@ -862,12 +910,19 @@ def load_project_skills(work_dir: str | Path) -> list[Skill]:
     all_skills = []
     seen_names: set[str] = set()
 
-    git_root = _find_git_repo_root(work_dir)
-
-    # Working dir takes precedence (more local rules override repo root rules)
-    search_roots: list[Path] = [work_dir]
-    if git_root is not None and git_root != work_dir:
-        search_roots.append(git_root)
+    if discover_all_repos:
+        # Find all git repos under work_dir (depth=1)
+        search_roots = _discover_git_repos(work_dir, max_depth=1)
+        # Include work_dir itself if not already in the list
+        if work_dir not in search_roots:
+            search_roots.insert(0, work_dir)
+        logger.debug(f"Discovered {len(search_roots)} git repos under {work_dir}")
+    else:
+        # Original behavior: work_dir + its ancestor git root
+        git_root = _find_git_repo_root(work_dir)
+        search_roots = [work_dir]
+        if git_root is not None and git_root != work_dir:
+            search_roots.append(git_root)
 
     # First, load third-party skill files (AGENTS.md, .cursorrules, etc.) from each
     # search root. This ensures they are loaded even if .openhands/skills doesn't
@@ -1097,6 +1152,7 @@ def load_available_skills(
     include_project: bool = False,
     include_public: bool = False,
     marketplace_path: str | None = DEFAULT_MARKETPLACE_PATH,
+    discover_all_repos: bool = False,
 ) -> dict[str, Skill]:
     """Load and merge skills from SDK-level sources with consistent precedence.
 
@@ -1115,6 +1171,9 @@ def load_available_skills(
         include_public: Load public skills from the OpenHands extensions repo.
         marketplace_path: Relative marketplace JSON path to use for public skills.
             Pass None to load all public skills without marketplace filtering.
+        discover_all_repos: If True, discover and load skills from all git
+            repositories found under work_dir (depth=1). This is useful when
+            multiple repositories are cloned in the same workspace.
 
     Returns:
         Dict mapping skill name → Skill, with higher-precedence sources
@@ -1138,7 +1197,9 @@ def load_available_skills(
 
     if include_project and work_dir:
         try:
-            for s in load_project_skills(work_dir):
+            for s in load_project_skills(
+                work_dir, discover_all_repos=discover_all_repos
+            ):
                 available[s.name] = s
         except Exception as e:
             logger.warning(f"Failed to load project skills: {e}")

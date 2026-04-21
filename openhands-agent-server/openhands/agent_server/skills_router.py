@@ -74,6 +74,14 @@ class SkillsRequest(BaseModel):
     project_dir: str | None = Field(
         default=None, description="Workspace directory path for project skills"
     )
+    discover_all_repos: bool = Field(
+        default=False,
+        description=(
+            "If true, discover and load skills from all git repositories "
+            "found under project_dir (depth=1). This is useful when multiple "
+            "repositories are cloned in the same workspace."
+        ),
+    )
     org_config: OrgConfig | None = Field(
         default=None, description="Organization skills configuration"
     )
@@ -154,6 +162,7 @@ def get_skills(request: SkillsRequest) -> SkillsResponse:
         org_name=org_name,
         sandbox_exposed_urls=sandbox_urls,
         marketplace_path=request.marketplace_path,
+        discover_all_repos=request.discover_all_repos,
     )
 
     # Convert Skill objects to SkillInfo for response

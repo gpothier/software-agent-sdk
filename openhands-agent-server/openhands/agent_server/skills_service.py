@@ -286,6 +286,7 @@ def load_all_skills(
     org_name: str | None = None,
     sandbox_exposed_urls: list[ExposedUrlData] | None = None,
     marketplace_path: str | None = DEFAULT_MARKETPLACE_PATH,
+    discover_all_repos: bool = False,
 ) -> SkillLoadResult:
     """Load and merge skills from all configured sources.
 
@@ -308,6 +309,9 @@ def load_all_skills(
         sandbox_exposed_urls: List of exposed URLs from sandbox.
         marketplace_path: Relative marketplace JSON path for public skills.
             Pass None to load all public skills without marketplace filtering.
+        discover_all_repos: If True, discover and load skills from all git
+            repositories found under project_dir (depth=1). This is useful
+            when multiple repositories are cloned in the same workspace.
 
     Returns:
         SkillLoadResult containing merged skills and source counts.
@@ -355,6 +359,7 @@ def load_all_skills(
         include_user=False,
         include_project=load_project,
         include_public=False,
+        discover_all_repos=discover_all_repos,
     )
     sources["project"] = len(project_skills)
     skill_lists.append(list(project_skills.values()))
