@@ -173,7 +173,10 @@ class Config(BaseModel):
     )
     enable_ssh: bool = Field(
         default=True,
-        description="Whether to enable SSH server functionality for local VSCode Remote-SSH access",
+        description=(
+            "Whether to enable SSH server functionality for local "
+            "VSCode Remote-SSH access"
+        ),
     )
     ssh_port: int = Field(
         default=2222,

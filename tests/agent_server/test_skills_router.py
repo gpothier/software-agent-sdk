@@ -5,7 +5,8 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from openhands.agent_server.api import api
+from openhands.agent_server.api import create_app
+from openhands.agent_server.config import Config
 from openhands.agent_server.skills_service import SkillLoadResult
 from openhands.sdk.skills import KeywordTrigger, Skill
 
@@ -13,7 +14,9 @@ from openhands.sdk.skills import KeywordTrigger, Skill
 @pytest.fixture
 def client():
     """Create a test client for the FastAPI app."""
-    return TestClient(api)
+    config = Config(session_api_keys=[])  # Disable authentication for tests
+    app = create_app(config)
+    return TestClient(app)
 
 
 class TestGetSkillsEndpoint:

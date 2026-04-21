@@ -129,9 +129,7 @@ class VSCodeService:
         """
         return self.process is not None and self.process.returncode is None
 
-    async def health_check(
-        self, timeout: float = DEFAULT_HEALTH_CHECK_TIMEOUT
-    ) -> bool:
+    async def health_check(self, timeout: float = DEFAULT_HEALTH_CHECK_TIMEOUT) -> bool:
         """Check if VSCode server is actually responsive.
 
         This performs an HTTP request to verify the server can respond,
@@ -154,7 +152,7 @@ class VSCodeService:
                 ) as resp:
                     # VSCode returns 200 or 302 (redirect to auth page)
                     return resp.status in (200, 302)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"VSCode health check timed out after {timeout}s")
             return False
         except aiohttp.ClientError as e:
@@ -184,7 +182,8 @@ class VSCodeService:
             timeout: Timeout for the health check request in seconds
 
         Returns:
-            True if restart was needed and successful, False if healthy or restart failed
+            True if restart was needed and successful, False if healthy or
+            restart failed
         """
         if await self.health_check(timeout):
             self._consecutive_failures = 0
