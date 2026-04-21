@@ -3,11 +3,11 @@ name: Agent Server
 
 on:
     push:
-        branches: [main]
+        branches: [main, my]
         tags:
             - '*'  # Trigger on any tag (e.g., 1.0.0, 1.0.0a5, build-docker)
     pull_request:
-        branches: [main]
+        branches: [main, my]
     workflow_dispatch:
         inputs:
             base_image:
@@ -15,9 +15,9 @@ on:
                 type: string
                 default: nikolaik/python-nodejs:python3.13-nodejs22-slim
             image:
-                description: GHCR image name
+                description: GHCR image name (leave empty to use ghcr.io/{repo_owner}/agent-server)
                 type: string
-                default: ghcr.io/openhands/agent-server
+                default: ''
             platforms:
                 description: Target platforms
                 type: string
@@ -146,8 +146,27 @@ jobs:
               run: |
                   make test-server-schema
 
+    # Determine which matrix combinations to build
+    setup-matrix:
+        name: Setup Build Matrix
+        runs-on: ubuntu-latest
+        outputs:
+            matrix: ${{ steps.set-matrix.outputs.matrix }}
+        steps:
+            - name: Set matrix
+              id: set-matrix
+              run: |
+                  if [[ "${{ github.ref }}" == "refs/heads/my" ]]; then
+                    # On 'my' branch: only python-amd64
+                    echo 'matrix={"include":[{"variant":"python","arch":"amd64","base_image":"nikolaik/python-nodejs:python3.13-nodejs22-slim","runner":"ubuntu-24.04","platform":"linux/amd64"}]}' >> $GITHUB_OUTPUT
+                  else
+                    # On other branches: full matrix
+                    echo 'matrix={"include":[{"variant":"python","arch":"amd64","base_image":"nikolaik/python-nodejs:python3.13-nodejs22-slim","runner":"ubuntu-24.04","platform":"linux/amd64"},{"variant":"python","arch":"arm64","base_image":"nikolaik/python-nodejs:python3.13-nodejs22-slim","runner":"ubuntu-24.04-arm","platform":"linux/arm64"},{"variant":"java","arch":"amd64","base_image":"eclipse-temurin:17-jdk","runner":"ubuntu-24.04","platform":"linux/amd64"},{"variant":"java","arch":"arm64","base_image":"eclipse-temurin:17-jdk","runner":"ubuntu-24.04-arm","platform":"linux/arm64"},{"variant":"golang","arch":"amd64","base_image":"golang:1.21-bookworm","runner":"ubuntu-24.04","platform":"linux/amd64"},{"variant":"golang","arch":"arm64","base_image":"golang:1.21-bookworm","runner":"ubuntu-24.04-arm","platform":"linux/arm64"}]}' >> $GITHUB_OUTPUT
+                  fi
+
     build-and-push-image:
         name: Build & Push (${{ matrix.variant }}-${{ matrix.arch }})
+        needs: setup-matrix
         # Run on push events, pull requests from the same repository (not forks), and manual workflow_dispatch
         # Fork PRs cannot push to GHCR and would fail authentication
         if: >
@@ -157,55 +176,15 @@ jobs:
              !github.event.pull_request.head.repo.fork)
         strategy:
             fail-fast: false
-            matrix:
-                # Explicit matrix: 3 variants × 2 architectures = 6 jobs
-                # Each job specifies exactly what it builds and where it runs
-                include:
-                    # Python variant
-                    - variant: python
-                      arch: amd64
-                      base_image: nikolaik/python-nodejs:python3.13-nodejs22-slim
-                      runner: ubuntu-24.04
-                      platform: linux/amd64
-
-                    - variant: python
-                      arch: arm64
-                      base_image: nikolaik/python-nodejs:python3.13-nodejs22-slim
-                      runner: ubuntu-24.04-arm
-                      platform: linux/arm64
-
-                    # Java variant
-                    - variant: java
-                      arch: amd64
-                      base_image: eclipse-temurin:17-jdk
-                      runner: ubuntu-24.04
-                      platform: linux/amd64
-
-                    - variant: java
-                      arch: arm64
-                      base_image: eclipse-temurin:17-jdk
-                      runner: ubuntu-24.04-arm
-                      platform: linux/arm64
-
-                    # Golang variant
-                    - variant: golang
-                      arch: amd64
-                      base_image: golang:1.21-bookworm
-                      runner: ubuntu-24.04
-                      platform: linux/amd64
-
-                    - variant: golang
-                      arch: arm64
-                      base_image: golang:1.21-bookworm
-                      runner: ubuntu-24.04-arm
-                      platform: linux/arm64
+            matrix: ${{ fromJSON(needs.setup-matrix.outputs.matrix) }}
 
         runs-on: ${{ matrix.runner }}
 
         env:
-            IMAGE: ${{ inputs.image != '' && inputs.image || 'ghcr.io/openhands/agent-server' }}
+            IMAGE: ${{ inputs.image != '' && inputs.image || format('ghcr.io/{0}/agent-server', github.repository_owner) }}
             BASE_IMAGE: ${{ inputs.base_image != '' && inputs.base_image || matrix.base_image }}
-            CUSTOM_TAGS: ${{ matrix.variant }}
+            # Use 'my-python' tag on 'my' branch, otherwise use variant name
+            CUSTOM_TAGS: ${{ github.ref == 'refs/heads/my' && 'my-python' || matrix.variant }}
             VARIANT: ${{ matrix.variant }}
             ARCH: ${{ matrix.arch }}
             TARGET: binary
@@ -294,6 +273,15 @@ jobs:
                       rm -rf "${{ steps.prep.outputs.build_context }}"
                   fi
 
+            - name: Add simple tag for my branch
+              if: github.ref == 'refs/heads/my'
+              run: |
+                  # Get the first tag from the build (e.g., ghcr.io/gpothier/agent-server:abc123-my-python-amd64)
+                  SOURCE_TAG=$(echo "${{ steps.prep.outputs.tags }}" | cut -d',' -f1)
+                  TARGET_TAG="${{ env.IMAGE }}:my-python"
+                  echo "Adding simple tag: $TARGET_TAG from $SOURCE_TAG"
+                  docker buildx imagetools create -t "$TARGET_TAG" "$SOURCE_TAG"
+
             - name: Summary (${{ matrix.variant }}-${{ matrix.arch }}) - outputs
               run: |
                   echo "Image: ${{ env.IMAGE }}"
@@ -330,16 +318,18 @@ jobs:
     merge-manifests:
         name: Merge Multi-Arch Manifests
         needs: build-and-push-image
+        # Skip on 'my' branch (only single-arch python build)
         if: >
-            github.event_name == 'push' ||
-            (github.event_name == 'pull_request' &&
-             !github.event.pull_request.head.repo.fork)
+            github.ref != 'refs/heads/my' &&
+            (github.event_name == 'push' ||
+             (github.event_name == 'pull_request' &&
+              !github.event.pull_request.head.repo.fork))
         runs-on: ubuntu-24.04
         strategy:
             matrix:
                 variant: [python, java, golang]
         env:
-            IMAGE: ${{ inputs.image != '' && inputs.image || 'ghcr.io/openhands/agent-server' }}
+            IMAGE: ${{ inputs.image != '' && inputs.image || format('ghcr.io/{0}/agent-server', github.repository_owner) }}
 
         steps:
             - name: Download build info to extract SHORT_SHA
