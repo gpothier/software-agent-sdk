@@ -871,6 +871,7 @@ def load_project_skills(
     work_dir: str | Path,
     *,
     discover_all_repos: bool = False,
+    workspace_base: str | Path | None = None,
 ) -> list[Skill]:
     """Load skills from project-specific directories.
 
@@ -896,12 +897,13 @@ def load_project_skills(
     Args:
         work_dir: Path to the project/working directory.
         discover_all_repos: If True, discover and load skills from all git
-            repositories in the workspace. The search base depends on work_dir:
-            - If work_dir is a git repo (e.g., /workspace/project/main-repo),
-              searches the parent (/workspace/project) to find sibling repos
-            - If work_dir is NOT a git repo (e.g., /workspace/project when
-              starting without a specific repo), searches work_dir itself
+            repositories under workspace_base (or work_dir if not provided).
             The work_dir's skills always take precedence over discovered repos.
+        workspace_base: Base workspace directory (e.g., /workspace/project).
+            When discover_all_repos=True, this is used as the search root
+            for discovering all git repositories. If not provided, falls back
+            to heuristic: if work_dir is a git repo, uses work_dir.parent;
+            otherwise uses work_dir itself.
 
     Returns:
         List of Skill objects loaded from project directories.
@@ -909,18 +911,23 @@ def load_project_skills(
     """
     if isinstance(work_dir, str):
         work_dir = Path(work_dir)
+    if isinstance(workspace_base, str):
+        workspace_base = Path(workspace_base)
 
     all_skills = []
     seen_names: set[str] = set()
 
     if discover_all_repos:
         # Determine the search base directory:
-        # - If work_dir is a git repo (e.g., /workspace/project/main-repo),
-        #   search the parent (/workspace/project) to find sibling repos
-        # - If work_dir is NOT a git repo (e.g., /workspace/project when
-        #   starting without a specific repo), search work_dir itself
-        work_dir_is_git_repo = (work_dir / ".git").exists()
-        search_base = work_dir.parent if work_dir_is_git_repo else work_dir
+        # 1. If workspace_base is provided, use it directly
+        # 2. Otherwise, fall back to heuristic:
+        #    - If work_dir is a git repo, use its parent
+        #    - If work_dir is NOT a git repo, use work_dir itself
+        if workspace_base is not None:
+            search_base = workspace_base
+        else:
+            work_dir_is_git_repo = (work_dir / ".git").exists()
+            search_base = work_dir.parent if work_dir_is_git_repo else work_dir
         discovered_repos = _discover_git_repos(search_base, max_depth=1)
         # Ensure work_dir is always first (highest precedence), followed by
         # other discovered repos in alphabetical order
@@ -1172,6 +1179,7 @@ def load_available_skills(
     include_public: bool = False,
     marketplace_path: str | None = DEFAULT_MARKETPLACE_PATH,
     discover_all_repos: bool = False,
+    workspace_base: str | Path | None = None,
 ) -> dict[str, Skill]:
     """Load and merge skills from SDK-level sources with consistent precedence.
 
@@ -1191,8 +1199,11 @@ def load_available_skills(
         marketplace_path: Relative marketplace JSON path to use for public skills.
             Pass None to load all public skills without marketplace filtering.
         discover_all_repos: If True, discover and load skills from all git
-            repositories found under work_dir (depth=1). This is useful when
-            multiple repositories are cloned in the same workspace.
+            repositories under workspace_base (or work_dir if not provided).
+        workspace_base: Base workspace directory (e.g., /workspace/project).
+            When discover_all_repos=True, this is used as the search root
+            for discovering all git repositories. If not provided, falls back
+            to heuristic based on work_dir.
 
     Returns:
         Dict mapping skill name → Skill, with higher-precedence sources
@@ -1217,7 +1228,9 @@ def load_available_skills(
     if include_project and work_dir:
         try:
             for s in load_project_skills(
-                work_dir, discover_all_repos=discover_all_repos
+                work_dir,
+                discover_all_repos=discover_all_repos,
+                workspace_base=workspace_base,
             ):
                 available[s.name] = s
         except Exception as e:

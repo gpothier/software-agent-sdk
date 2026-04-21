@@ -74,12 +74,21 @@ class SkillsRequest(BaseModel):
     project_dir: str | None = Field(
         default=None, description="Workspace directory path for project skills"
     )
+    workspace_base: str | None = Field(
+        default=None,
+        description=(
+            "Base workspace directory (e.g., /workspace/project). "
+            "When discover_all_repos=true, this is used as the search root "
+            "for discovering all git repositories. If not provided, falls "
+            "back to project_dir's parent (if project_dir is a git repo) "
+            "or project_dir itself."
+        ),
+    )
     discover_all_repos: bool = Field(
         default=False,
         description=(
             "If true, discover and load skills from all git repositories "
-            "in the workspace. If project_dir is a git repo, searches its "
-            "parent for sibling repos. If not, searches project_dir itself."
+            "under workspace_base (or project_dir if workspace_base is not set)."
         ),
     )
     org_config: OrgConfig | None = Field(
@@ -158,6 +167,7 @@ def get_skills(request: SkillsRequest) -> SkillsResponse:
         load_project=request.load_project,
         load_org=request.load_org,
         project_dir=request.project_dir,
+        workspace_base=request.workspace_base,
         org_repo_url=org_repo_url,
         org_name=org_name,
         sandbox_exposed_urls=sandbox_urls,

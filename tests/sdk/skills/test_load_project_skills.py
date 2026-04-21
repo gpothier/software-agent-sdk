@@ -645,3 +645,77 @@ def test_load_project_skills_discover_work_dir_is_git_repo(tmp_path):
     # Should find skills from work_dir AND sibling repos
     assert "agents" in skill_names
     assert "cursorrules" in skill_names
+
+
+def test_load_project_skills_discover_with_workspace_base(tmp_path):
+    """Test discover_all_repos with explicit workspace_base parameter.
+
+    When workspace_base is provided, it should be used as the search root
+    regardless of whether work_dir is a git repo or not.
+    """
+    # Create a workspace with repos
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    repo_main = workspace / "main-repo"
+    repo_other = workspace / "other-repo"
+    repo_main.mkdir()
+    repo_other.mkdir()
+    (repo_main / ".git").mkdir()
+    (repo_other / ".git").mkdir()
+    (repo_main / "AGENTS.md").write_text("# Main repo guidelines")
+    (repo_other / ".cursorrules").write_text("# Other repo cursor rules")
+
+    # Call with explicit workspace_base - this should work even if work_dir
+    # is a git repo (the heuristic would otherwise go to parent of workspace)
+    skills = load_project_skills(
+        repo_main, discover_all_repos=True, workspace_base=workspace
+    )
+    skill_names = {s.name for s in skills}
+
+    # Should find skills from work_dir AND sibling repos under workspace_base
+    assert "agents" in skill_names
+    assert "cursorrules" in skill_names
+
+
+def test_load_project_skills_workspace_base_overrides_heuristic(tmp_path):
+    """Test that workspace_base overrides the git repo heuristic.
+
+    Even when work_dir is a git repo, if workspace_base is provided,
+    it should be used instead of work_dir.parent.
+    """
+    # Create nested structure: grandparent/parent/child
+    grandparent = tmp_path / "grandparent"
+    parent = grandparent / "parent"
+    child = parent / "child-repo"
+    sibling = parent / "sibling-repo"
+
+    grandparent.mkdir()
+    parent.mkdir()
+    child.mkdir()
+    sibling.mkdir()
+    (child / ".git").mkdir()
+    (sibling / ".git").mkdir()
+    (child / "AGENTS.md").write_text("# Child repo")
+    (sibling / ".cursorrules").write_text("# Sibling repo")
+
+    # Without workspace_base, heuristic would use child.parent = parent
+    skills = load_project_skills(child, discover_all_repos=True)
+    skill_names = {s.name for s in skills}
+    assert "agents" in skill_names
+    assert "cursorrules" in skill_names
+
+    # With workspace_base pointing to grandparent (no repos there),
+    # should only find child's skills (work_dir is always included)
+    skills = load_project_skills(
+        child, discover_all_repos=True, workspace_base=grandparent
+    )
+    skill_names = {s.name for s in skills}
+    assert "agents" in skill_names
+    # sibling is not under grandparent directly, so its skills won't be found
+    # (unless grandparent/parent/sibling-repo is at depth > 1)
+    # Actually, _discover_git_repos with depth=1 would find parent but not
+    # the repos inside parent. Let me verify this works as expected.
+    # grandparent has no .git, so it looks at children: parent (no .git)
+    # parent has children: child-repo, sibling-repo (both have .git)
+    # But depth=1 only checks immediate children of grandparent, not grandchildren
+    assert "cursorrules" not in skill_names
