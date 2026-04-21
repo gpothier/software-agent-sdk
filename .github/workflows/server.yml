@@ -3,11 +3,11 @@ name: Agent Server
 
 on:
     push:
-        branches: [main]
+        branches: [main, my]
         tags:
             - '*'  # Trigger on any tag (e.g., 1.0.0, 1.0.0a5, build-docker)
     pull_request:
-        branches: [main]
+        branches: [main, my]
     workflow_dispatch:
         inputs:
             base_image:
@@ -15,9 +15,9 @@ on:
                 type: string
                 default: nikolaik/python-nodejs:python3.13-nodejs22-slim
             image:
-                description: GHCR image name
+                description: GHCR image name (leave empty to use ghcr.io/{repo_owner}/agent-server)
                 type: string
-                default: ghcr.io/openhands/agent-server
+                default: ''
             platforms:
                 description: Target platforms
                 type: string
@@ -160,6 +160,7 @@ jobs:
             matrix:
                 # Explicit matrix: 3 variants × 2 architectures = 6 jobs
                 # Each job specifies exactly what it builds and where it runs
+                # On 'my' branch, only python-amd64 is built (see job-level if condition)
                 include:
                     # Python variant
                     - variant: python
@@ -173,6 +174,7 @@ jobs:
                       base_image: nikolaik/python-nodejs:python3.13-nodejs22-slim
                       runner: ubuntu-24.04-arm
                       platform: linux/arm64
+                      skip_on_my: true
 
                     # Java variant
                     - variant: java
@@ -180,12 +182,14 @@ jobs:
                       base_image: eclipse-temurin:17-jdk
                       runner: ubuntu-24.04
                       platform: linux/amd64
+                      skip_on_my: true
 
                     - variant: java
                       arch: arm64
                       base_image: eclipse-temurin:17-jdk
                       runner: ubuntu-24.04-arm
                       platform: linux/arm64
+                      skip_on_my: true
 
                     # Golang variant
                     - variant: golang
@@ -193,19 +197,24 @@ jobs:
                       base_image: golang:1.21-bookworm
                       runner: ubuntu-24.04
                       platform: linux/amd64
+                      skip_on_my: true
 
                     - variant: golang
                       arch: arm64
                       base_image: golang:1.21-bookworm
                       runner: ubuntu-24.04-arm
                       platform: linux/arm64
+                      skip_on_my: true
 
         runs-on: ${{ matrix.runner }}
+        # Skip non-python-amd64 builds on 'my' branch
+        if: ${{ !(github.ref == 'refs/heads/my' && matrix.skip_on_my) }}
 
         env:
-            IMAGE: ${{ inputs.image != '' && inputs.image || 'ghcr.io/openhands/agent-server' }}
+            IMAGE: ${{ inputs.image != '' && inputs.image || format('ghcr.io/{0}/agent-server', github.repository_owner) }}
             BASE_IMAGE: ${{ inputs.base_image != '' && inputs.base_image || matrix.base_image }}
-            CUSTOM_TAGS: ${{ matrix.variant }}
+            # Use 'my-python' tag on 'my' branch, otherwise use variant name
+            CUSTOM_TAGS: ${{ github.ref == 'refs/heads/my' && 'my-python' || matrix.variant }}
             VARIANT: ${{ matrix.variant }}
             ARCH: ${{ matrix.arch }}
             TARGET: binary
@@ -330,16 +339,18 @@ jobs:
     merge-manifests:
         name: Merge Multi-Arch Manifests
         needs: build-and-push-image
+        # Skip on 'my' branch (only single-arch python build)
         if: >
-            github.event_name == 'push' ||
-            (github.event_name == 'pull_request' &&
-             !github.event.pull_request.head.repo.fork)
+            github.ref != 'refs/heads/my' &&
+            (github.event_name == 'push' ||
+             (github.event_name == 'pull_request' &&
+              !github.event.pull_request.head.repo.fork))
         runs-on: ubuntu-24.04
         strategy:
             matrix:
                 variant: [python, java, golang]
         env:
-            IMAGE: ${{ inputs.image != '' && inputs.image || 'ghcr.io/openhands/agent-server' }}
+            IMAGE: ${{ inputs.image != '' && inputs.image || format('ghcr.io/{0}/agent-server', github.repository_owner) }}
 
         steps:
             - name: Download build info to extract SHORT_SHA
