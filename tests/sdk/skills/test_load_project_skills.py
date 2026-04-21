@@ -4,7 +4,7 @@ from openhands.sdk.skills import (
     KeywordTrigger,
     load_project_skills,
 )
-from openhands.sdk.context.skills.skill import _discover_git_repos
+from openhands.sdk.skills.skill import _discover_git_repos
 
 
 def test_load_project_skills_no_directories(tmp_path):
