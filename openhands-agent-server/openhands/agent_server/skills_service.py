@@ -282,6 +282,7 @@ def load_all_skills(
     load_project: bool = True,
     load_org: bool = True,
     project_dir: str | None = None,
+    workspace_base: str | None = None,
     org_repo_url: str | None = None,
     org_name: str | None = None,
     sandbox_exposed_urls: list[ExposedUrlData] | None = None,
@@ -304,22 +305,26 @@ def load_all_skills(
         load_project: Whether to load project skills from workspace.
         load_org: Whether to load organization-level skills.
         project_dir: Workspace directory path for project skills.
+        workspace_base: Base workspace directory (e.g., /workspace/project).
+            When discover_all_repos=True, this is used as the search root
+            for discovering all git repositories. If not provided, falls back
+            to heuristic based on project_dir.
         org_repo_url: Pre-authenticated Git URL for org skills.
         org_name: Organization name for org skills.
         sandbox_exposed_urls: List of exposed URLs from sandbox.
         marketplace_path: Relative marketplace JSON path for public skills.
             Pass None to load all public skills without marketplace filtering.
         discover_all_repos: If True, discover and load skills from all git
-            repositories in the workspace. If project_dir is a git repo, searches
-            its parent for sibling repos. If not a git repo, searches project_dir
-            itself for child repos. project_dir's skills take precedence.
+            repositories under workspace_base (or project_dir if not provided).
+            project_dir's skills take precedence over discovered repos.
 
     Returns:
         SkillLoadResult containing merged skills and source counts.
     """
     logger.info(
         f"load_all_skills called with project_dir={project_dir}, "
-        f"discover_all_repos={discover_all_repos}, load_project={load_project}"
+        f"workspace_base={workspace_base}, discover_all_repos={discover_all_repos}, "
+        f"load_project={load_project}"
     )
 
     sources: dict[str, int] = {}
@@ -366,6 +371,7 @@ def load_all_skills(
         include_project=load_project,
         include_public=False,
         discover_all_repos=discover_all_repos,
+        workspace_base=workspace_base,
     )
     sources["project"] = len(project_skills)
     skill_lists.append(list(project_skills.values()))
