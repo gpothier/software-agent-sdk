@@ -316,6 +316,11 @@ def load_all_skills(
     Returns:
         SkillLoadResult containing merged skills and source counts.
     """
+    logger.info(
+        f"load_all_skills called with project_dir={project_dir}, "
+        f"discover_all_repos={discover_all_repos}, load_project={load_project}"
+    )
+
     sources: dict[str, int] = {}
     skill_lists: list[list[Skill]] = []
 
