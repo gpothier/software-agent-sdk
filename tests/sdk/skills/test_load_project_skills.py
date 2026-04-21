@@ -4,6 +4,7 @@ from openhands.sdk.skills import (
     KeywordTrigger,
     load_project_skills,
 )
+from openhands.sdk.context.skills.skill import _discover_git_repos
 
 
 def test_load_project_skills_no_directories(tmp_path):
@@ -385,3 +386,173 @@ def test_load_project_skills_loads_skills_directories_from_git_root(tmp_path):
     assert any(
         s.name == "root_skill" and "Loaded from root" in s.content for s in skills
     )
+
+
+# Tests for _discover_git_repos and discover_all_repos functionality
+
+
+def test_discover_git_repos_empty_dir(tmp_path):
+    """Test _discover_git_repos returns empty list for directory without git repos."""
+    repos = _discover_git_repos(tmp_path)
+    assert repos == []
+
+
+def test_discover_git_repos_base_is_repo(tmp_path):
+    """Test _discover_git_repos finds repo when base_dir itself is a git repo."""
+    (tmp_path / ".git").mkdir()
+    repos = _discover_git_repos(tmp_path)
+    assert repos == [tmp_path]
+
+
+def test_discover_git_repos_single_child(tmp_path):
+    """Test _discover_git_repos finds a single child git repo."""
+    child_repo = tmp_path / "child-repo"
+    child_repo.mkdir()
+    (child_repo / ".git").mkdir()
+
+    repos = _discover_git_repos(tmp_path)
+    assert repos == [child_repo]
+
+
+def test_discover_git_repos_multiple_children(tmp_path):
+    """Test _discover_git_repos finds multiple child git repos."""
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    repo_a.mkdir()
+    repo_b.mkdir()
+    (repo_a / ".git").mkdir()
+    (repo_b / ".git").mkdir()
+
+    repos = _discover_git_repos(tmp_path)
+    # Should be sorted alphabetically
+    assert repos == [repo_a, repo_b]
+
+
+def test_discover_git_repos_skips_hidden_dirs(tmp_path):
+    """Test _discover_git_repos skips directories starting with dot."""
+    hidden_repo = tmp_path / ".hidden-repo"
+    hidden_repo.mkdir()
+    (hidden_repo / ".git").mkdir()
+
+    repos = _discover_git_repos(tmp_path)
+    assert repos == []
+
+
+def test_discover_git_repos_depth_zero(tmp_path):
+    """Test _discover_git_repos with max_depth=0 only checks base_dir."""
+    child_repo = tmp_path / "child-repo"
+    child_repo.mkdir()
+    (child_repo / ".git").mkdir()
+
+    repos = _discover_git_repos(tmp_path, max_depth=0)
+    assert repos == []  # base_dir is not a git repo, children not checked
+
+
+def test_discover_git_repos_base_and_children(tmp_path):
+    """Test _discover_git_repos finds base and child repos."""
+    (tmp_path / ".git").mkdir()
+    child_repo = tmp_path / "child-repo"
+    child_repo.mkdir()
+    (child_repo / ".git").mkdir()
+
+    repos = _discover_git_repos(tmp_path)
+    assert tmp_path in repos
+    assert child_repo in repos
+
+
+def test_load_project_skills_discover_all_repos_single_repo(tmp_path):
+    """Test discover_all_repos with a single git repo."""
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "AGENTS.md").write_text("# Main repo guidelines")
+
+    skills = load_project_skills(tmp_path, discover_all_repos=True)
+    assert len(skills) == 1
+    assert skills[0].name == "agents"
+    assert "Main repo" in skills[0].content
+
+
+def test_load_project_skills_discover_all_repos_multiple_repos(tmp_path):
+    """Test discover_all_repos loads skills from multiple cloned repos."""
+    # Create workspace with two cloned repos
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    repo_a.mkdir()
+    repo_b.mkdir()
+    (repo_a / ".git").mkdir()
+    (repo_b / ".git").mkdir()
+
+    # Each repo has its own AGENTS.md
+    (repo_a / "AGENTS.md").write_text("# Repo A guidelines")
+    (repo_b / "AGENTS.md").write_text("# Repo B guidelines")
+
+    # Also create skills in one repo
+    skills_dir = repo_a / ".agents" / "skills"
+    skills_dir.mkdir(parents=True)
+    (skills_dir / "repo-a-skill.md").write_text(
+        "---\nname: repo-a-skill\ntriggers:\n  - repoa\n---\nSkill from repo A"
+    )
+
+    skills = load_project_skills(tmp_path, discover_all_repos=True)
+    skill_names = {s.name for s in skills}
+
+    # Should have skills from both repos
+    # Note: "agents" appears in both, first one wins (repo-a alphabetically)
+    assert "agents" in skill_names
+    assert "repo-a-skill" in skill_names
+
+
+def test_load_project_skills_discover_all_repos_precedence(tmp_path):
+    """Test that earlier repos (alphabetically) take precedence for duplicates."""
+    repo_a = tmp_path / "aaa-repo"
+    repo_z = tmp_path / "zzz-repo"
+    repo_a.mkdir()
+    repo_z.mkdir()
+    (repo_a / ".git").mkdir()
+    (repo_z / ".git").mkdir()
+
+    (repo_a / "AGENTS.md").write_text("# From aaa-repo")
+    (repo_z / "AGENTS.md").write_text("# From zzz-repo")
+
+    skills = load_project_skills(tmp_path, discover_all_repos=True)
+    agents_skills = [s for s in skills if s.name == "agents"]
+
+    assert len(agents_skills) == 1
+    assert "aaa-repo" in agents_skills[0].content
+
+
+def test_load_project_skills_discover_all_repos_false_default(tmp_path):
+    """Test that discover_all_repos=False uses original behavior."""
+    # Workspace dir is not a git repo
+    # But has a child that is
+    child_repo = tmp_path / "child-repo"
+    child_repo.mkdir()
+    (child_repo / ".git").mkdir()
+    (child_repo / "AGENTS.md").write_text("# Child repo guidelines")
+
+    # With discover_all_repos=False (default), child repos are not discovered
+    skills = load_project_skills(tmp_path, discover_all_repos=False)
+    assert len(skills) == 0
+
+    # With discover_all_repos=True, child repos are discovered
+    skills = load_project_skills(tmp_path, discover_all_repos=True)
+    assert len(skills) == 1
+    assert "Child repo" in skills[0].content
+
+
+def test_load_project_skills_discover_includes_base_dir(tmp_path):
+    """Test that discover_all_repos includes base_dir even if not a git repo."""
+    # base_dir has a skill file but is not a git repo
+    (tmp_path / "AGENTS.md").write_text("# Base dir guidelines")
+
+    # Child is a git repo
+    child_repo = tmp_path / "child-repo"
+    child_repo.mkdir()
+    (child_repo / ".git").mkdir()
+    (child_repo / ".cursorrules").write_text("# Child cursor rules")
+
+    skills = load_project_skills(tmp_path, discover_all_repos=True)
+    skill_names = {s.name for s in skills}
+
+    # Should have skills from both base_dir and child repo
+    assert "agents" in skill_names
+    assert "cursorrules" in skill_names
