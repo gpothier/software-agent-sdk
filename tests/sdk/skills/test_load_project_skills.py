@@ -461,19 +461,34 @@ def test_discover_git_repos_base_and_children(tmp_path):
 
 
 def test_load_project_skills_discover_all_repos_single_repo(tmp_path):
-    """Test discover_all_repos with a single git repo."""
-    (tmp_path / ".git").mkdir()
-    (tmp_path / "AGENTS.md").write_text("# Main repo guidelines")
+    """Test discover_all_repos with a single git repo.
 
-    skills = load_project_skills(tmp_path, discover_all_repos=True)
+    When discover_all_repos=True, the function searches the parent of work_dir
+    to find sibling repositories. In this case, work_dir is a git repo and
+    its skills should be loaded.
+    """
+    # Create a main repo as the work_dir
+    main_repo = tmp_path / "main-repo"
+    main_repo.mkdir()
+    (main_repo / ".git").mkdir()
+    (main_repo / "AGENTS.md").write_text("# Main repo guidelines")
+
+    skills = load_project_skills(main_repo, discover_all_repos=True)
     assert len(skills) == 1
     assert skills[0].name == "agents"
     assert "Main repo" in skills[0].content
 
 
 def test_load_project_skills_discover_all_repos_multiple_repos(tmp_path):
-    """Test discover_all_repos loads skills from multiple cloned repos."""
-    # Create workspace with two cloned repos
+    """Test discover_all_repos loads skills from sibling repos.
+
+    When discover_all_repos=True and work_dir is /workspace/project/main-repo,
+    the function searches under /workspace/project to find:
+    - /workspace/project/main-repo
+    - /workspace/project/other-repo
+    etc.
+    """
+    # Create workspace with two sibling repos
     repo_a = tmp_path / "repo-a"
     repo_b = tmp_path / "repo-b"
     repo_a.mkdir()
@@ -486,23 +501,24 @@ def test_load_project_skills_discover_all_repos_multiple_repos(tmp_path):
     (repo_b / "AGENTS.md").write_text("# Repo B guidelines")
 
     # Also create skills in one repo
-    skills_dir = repo_a / ".agents" / "skills"
+    skills_dir = repo_b / ".agents" / "skills"
     skills_dir.mkdir(parents=True)
-    (skills_dir / "repo-a-skill.md").write_text(
-        "---\nname: repo-a-skill\ntriggers:\n  - repoa\n---\nSkill from repo A"
+    (skills_dir / "repo-b-skill.md").write_text(
+        "---\nname: repo-b-skill\ntriggers:\n  - repob\n---\nSkill from repo B"
     )
 
-    skills = load_project_skills(tmp_path, discover_all_repos=True)
+    # Call with repo_a as work_dir - should discover repo_b as sibling
+    skills = load_project_skills(repo_a, discover_all_repos=True)
     skill_names = {s.name for s in skills}
 
     # Should have skills from both repos
-    # Note: "agents" appears in both, first one wins (repo-a alphabetically)
+    # Note: "agents" appears in both, repo_a comes first (alphabetically)
     assert "agents" in skill_names
-    assert "repo-a-skill" in skill_names
+    assert "repo-b-skill" in skill_names
 
 
 def test_load_project_skills_discover_all_repos_precedence(tmp_path):
-    """Test that earlier repos (alphabetically) take precedence for duplicates."""
+    """Test that work_dir takes precedence, then alphabetical order."""
     repo_a = tmp_path / "aaa-repo"
     repo_z = tmp_path / "zzz-repo"
     repo_a.mkdir()
@@ -513,46 +529,119 @@ def test_load_project_skills_discover_all_repos_precedence(tmp_path):
     (repo_a / "AGENTS.md").write_text("# From aaa-repo")
     (repo_z / "AGENTS.md").write_text("# From zzz-repo")
 
-    skills = load_project_skills(tmp_path, discover_all_repos=True)
+    # When called with zzz-repo as work_dir, zzz-repo's skills come first
+    # (work_dir always inserted at position 0 if not in list)
+    skills = load_project_skills(repo_z, discover_all_repos=True)
     agents_skills = [s for s in skills if s.name == "agents"]
 
     assert len(agents_skills) == 1
-    assert "aaa-repo" in agents_skills[0].content
+    # zzz-repo is work_dir, so it should be first and win
+    assert "zzz-repo" in agents_skills[0].content
 
 
 def test_load_project_skills_discover_all_repos_false_default(tmp_path):
     """Test that discover_all_repos=False uses original behavior."""
-    # Workspace dir is not a git repo
-    # But has a child that is
-    child_repo = tmp_path / "child-repo"
-    child_repo.mkdir()
-    (child_repo / ".git").mkdir()
-    (child_repo / "AGENTS.md").write_text("# Child repo guidelines")
+    # Workspace has two sibling repos
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    repo_a.mkdir()
+    repo_b.mkdir()
+    (repo_a / ".git").mkdir()
+    (repo_b / ".git").mkdir()
+    (repo_a / "AGENTS.md").write_text("# Repo A guidelines")
+    (repo_b / "AGENTS.md").write_text("# Repo B guidelines")
 
-    # With discover_all_repos=False (default), child repos are not discovered
-    skills = load_project_skills(tmp_path, discover_all_repos=False)
-    assert len(skills) == 0
-
-    # With discover_all_repos=True, child repos are discovered
-    skills = load_project_skills(tmp_path, discover_all_repos=True)
+    # With discover_all_repos=False (default), only work_dir (repo_a) is searched
+    skills = load_project_skills(repo_a, discover_all_repos=False)
     assert len(skills) == 1
-    assert "Child repo" in skills[0].content
+    assert "Repo A" in skills[0].content
+
+    # With discover_all_repos=True, sibling repos are discovered
+    skills = load_project_skills(repo_a, discover_all_repos=True)
+    # Both repos have AGENTS.md, but repo_a wins (it's work_dir)
+    assert len(skills) == 1
+    assert "Repo A" in skills[0].content
 
 
-def test_load_project_skills_discover_includes_base_dir(tmp_path):
-    """Test that discover_all_repos includes base_dir even if not a git repo."""
-    # base_dir has a skill file but is not a git repo
-    (tmp_path / "AGENTS.md").write_text("# Base dir guidelines")
+def test_load_project_skills_discover_all_repos_sibling_skills(tmp_path):
+    """Test that discover_all_repos loads unique skills from sibling repos."""
+    repo_main = tmp_path / "main-repo"
+    repo_other = tmp_path / "other-repo"
+    repo_main.mkdir()
+    repo_other.mkdir()
+    (repo_main / ".git").mkdir()
+    (repo_other / ".git").mkdir()
 
-    # Child is a git repo
-    child_repo = tmp_path / "child-repo"
-    child_repo.mkdir()
-    (child_repo / ".git").mkdir()
-    (child_repo / ".cursorrules").write_text("# Child cursor rules")
+    # main-repo has AGENTS.md
+    (repo_main / "AGENTS.md").write_text("# Main repo guidelines")
 
+    # other-repo has .cursorrules (different skill)
+    (repo_other / ".cursorrules").write_text("# Other repo cursor rules")
+
+    # Call with main-repo as work_dir
+    skills = load_project_skills(repo_main, discover_all_repos=True)
+    skill_names = {s.name for s in skills}
+
+    # Should have skills from both repos (no name collision)
+    assert "agents" in skill_names
+    assert "cursorrules" in skill_names
+
+
+def test_load_project_skills_discover_work_dir_not_git_repo(tmp_path):
+    """Test discover_all_repos when work_dir is not a git repo.
+
+    Example: /workspace/project (starting without a specific repo).
+    When work_dir is NOT a git repo, we should search work_dir itself
+    (not its parent) to find child repos.
+    """
+    # work_dir is not a git repo (like /workspace/project)
+    # It has child repos
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    repo_a.mkdir()
+    repo_b.mkdir()
+    (repo_a / ".git").mkdir()
+    (repo_b / ".git").mkdir()
+    (repo_a / "AGENTS.md").write_text("# Repo A guidelines")
+    (repo_b / ".cursorrules").write_text("# Repo B cursor rules")
+
+    # work_dir also has its own skill file
+    (tmp_path / "AGENTS.md").write_text("# Workspace guidelines")
+
+    # Call with tmp_path (not a git repo) as work_dir
     skills = load_project_skills(tmp_path, discover_all_repos=True)
     skill_names = {s.name for s in skills}
 
-    # Should have skills from both base_dir and child repo
+    # Should find skills from work_dir AND its child repos
+    # work_dir's AGENTS.md takes precedence over repo_a's
+    assert "agents" in skill_names
+    assert "cursorrules" in skill_names
+    # Verify work_dir's skill wins (it's searched first)
+    agents_skill = next(s for s in skills if s.name == "agents")
+    assert "Workspace guidelines" in agents_skill.content
+
+
+def test_load_project_skills_discover_work_dir_is_git_repo(tmp_path):
+    """Test discover_all_repos when work_dir IS a git repo.
+
+    Example: /workspace/project/main-repo (starting with a specific repo).
+    When work_dir IS a git repo, we should search the parent directory
+    to find sibling repos.
+    """
+    # Create workspace with sibling repos
+    repo_main = tmp_path / "main-repo"
+    repo_other = tmp_path / "other-repo"
+    repo_main.mkdir()
+    repo_other.mkdir()
+    (repo_main / ".git").mkdir()
+    (repo_other / ".git").mkdir()
+    (repo_main / "AGENTS.md").write_text("# Main repo guidelines")
+    (repo_other / ".cursorrules").write_text("# Other repo cursor rules")
+
+    # Call with main-repo (a git repo) as work_dir
+    skills = load_project_skills(repo_main, discover_all_repos=True)
+    skill_names = {s.name for s in skills}
+
+    # Should find skills from work_dir AND sibling repos
     assert "agents" in skill_names
     assert "cursorrules" in skill_names
