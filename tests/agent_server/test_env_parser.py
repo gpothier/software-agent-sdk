@@ -64,8 +64,16 @@ class OptionalModel(BaseModel):
 
 @pytest.fixture
 def clean_env():
-    """Clean environment fixture that removes test env vars after each test."""
+    """Clean environment fixture that removes test env vars before and after each test.
+
+    This fixture clears OH_* prefixed environment variables before each test
+    to ensure tests don't pick up variables from the runtime environment.
+    """
     original_env = os.environ.copy()
+    # Clear any OH_* variables that might interfere with tests
+    for key in list(os.environ.keys()):
+        if key.startswith("OH_"):
+            del os.environ[key]
     yield
     # Restore original environment
     os.environ.clear()
