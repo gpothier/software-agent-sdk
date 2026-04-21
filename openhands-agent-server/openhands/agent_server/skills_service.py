@@ -310,8 +310,9 @@ def load_all_skills(
         marketplace_path: Relative marketplace JSON path for public skills.
             Pass None to load all public skills without marketplace filtering.
         discover_all_repos: If True, discover and load skills from all git
-            repositories found under project_dir (depth=1). This is useful
-            when multiple repositories are cloned in the same workspace.
+            repositories in the workspace. If project_dir is a git repo, searches
+            its parent for sibling repos. If not a git repo, searches project_dir
+            itself for child repos. project_dir's skills take precedence.
 
     Returns:
         SkillLoadResult containing merged skills and source counts.
