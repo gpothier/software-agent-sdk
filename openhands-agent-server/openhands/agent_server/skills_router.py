@@ -78,8 +78,8 @@ class SkillsRequest(BaseModel):
         default=False,
         description=(
             "If true, discover and load skills from all git repositories "
-            "found under project_dir (depth=1). This is useful when multiple "
-            "repositories are cloned in the same workspace."
+            "in the workspace. If project_dir is a git repo, searches its "
+            "parent for sibling repos. If not, searches project_dir itself."
         ),
     )
     org_config: OrgConfig | None = Field(

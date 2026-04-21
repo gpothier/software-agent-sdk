@@ -896,9 +896,12 @@ def load_project_skills(
     Args:
         work_dir: Path to the project/working directory.
         discover_all_repos: If True, discover and load skills from all git
-            repositories found under work_dir (depth=1), instead of just
-            loading from work_dir and its containing git root. This is useful
-            when multiple repositories are cloned in the same workspace.
+            repositories in the workspace. The search base depends on work_dir:
+            - If work_dir is a git repo (e.g., /workspace/project/main-repo),
+              searches the parent (/workspace/project) to find sibling repos
+            - If work_dir is NOT a git repo (e.g., /workspace/project when
+              starting without a specific repo), searches work_dir itself
+            The work_dir's skills always take precedence over discovered repos.
 
     Returns:
         List of Skill objects loaded from project directories.
@@ -911,14 +914,23 @@ def load_project_skills(
     seen_names: set[str] = set()
 
     if discover_all_repos:
-        # Find all git repos under work_dir (depth=1)
-        search_roots = _discover_git_repos(work_dir, max_depth=1)
-        # Include work_dir itself if not already in the list
-        if work_dir not in search_roots:
-            search_roots.insert(0, work_dir)
+        # Determine the search base directory:
+        # - If work_dir is a git repo (e.g., /workspace/project/main-repo),
+        #   search the parent (/workspace/project) to find sibling repos
+        # - If work_dir is NOT a git repo (e.g., /workspace/project when
+        #   starting without a specific repo), search work_dir itself
+        work_dir_is_git_repo = (work_dir / ".git").exists()
+        search_base = work_dir.parent if work_dir_is_git_repo else work_dir
+        discovered_repos = _discover_git_repos(search_base, max_depth=1)
+        # Ensure work_dir is always first (highest precedence), followed by
+        # other discovered repos in alphabetical order
+        search_roots = [work_dir]
+        for repo in discovered_repos:
+            if repo != work_dir:
+                search_roots.append(repo)
         logger.info(
             f"discover_all_repos enabled: found {len(search_roots)} search roots "
-            f"under {work_dir}: {[str(r) for r in search_roots]}"
+            f"under {search_base}: {[str(r) for r in search_roots]}"
         )
     else:
         # Original behavior: work_dir + its ancestor git root
