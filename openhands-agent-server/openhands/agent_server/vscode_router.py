@@ -140,6 +140,4 @@ async def restart_vscode_if_unhealthy() -> dict[str, bool]:
         return {"restarted": restarted, "was_healthy": not restarted}
     except Exception as e:
         logger.error(f"Error in restart-if-unhealthy: {e}")
-        raise HTTPException(
-            status_code=500, detail="Failed to check/restart VSCode"
-        )
+        raise HTTPException(status_code=500, detail="Failed to check/restart VSCode")
