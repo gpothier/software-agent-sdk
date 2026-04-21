@@ -916,13 +916,20 @@ def load_project_skills(
         # Include work_dir itself if not already in the list
         if work_dir not in search_roots:
             search_roots.insert(0, work_dir)
-        logger.debug(f"Discovered {len(search_roots)} git repos under {work_dir}")
+        logger.info(
+            f"discover_all_repos enabled: found {len(search_roots)} search roots "
+            f"under {work_dir}: {[str(r) for r in search_roots]}"
+        )
     else:
         # Original behavior: work_dir + its ancestor git root
         git_root = _find_git_repo_root(work_dir)
         search_roots = [work_dir]
         if git_root is not None and git_root != work_dir:
             search_roots.append(git_root)
+        logger.info(
+            f"discover_all_repos disabled: searching {len(search_roots)} roots: "
+            f"{[str(r) for r in search_roots]}"
+        )
 
     # First, load third-party skill files (AGENTS.md, .cursorrules, etc.) from each
     # search root. This ensures they are loaded even if .openhands/skills doesn't
