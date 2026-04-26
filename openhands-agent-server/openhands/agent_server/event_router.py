@@ -193,7 +193,7 @@ async def send_message(
 ) -> Success:
     """Send a message to a conversation"""
     message = Message(role=request.role, content=request.content)
-    await event_service.send_message(message, request.run)
+    await event_service.send_message(message, request.run, request.event_id)
     return Success()
 
 
