@@ -329,11 +329,15 @@ class EventService:
         )
         return results
 
-    async def send_message(self, message: Message, run: bool = False):
+    async def send_message(
+        self, message: Message, run: bool = False, event_id: str | None = None
+    ):
         if not self._conversation:
             raise ValueError("inactive_service")
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self._conversation.send_message, message)
+        await loop.run_in_executor(
+            None, self._conversation.send_message, message, None, event_id
+        )
         if run:
             run = (
                 await self._get_execution_status()

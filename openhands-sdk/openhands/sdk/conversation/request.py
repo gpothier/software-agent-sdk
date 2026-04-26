@@ -55,6 +55,11 @@ class SendMessageRequest(BaseModel):
         default=False,
         description="Whether the agent loop should automatically run if not running",
     )
+    event_id: str | None = Field(
+        default=None,
+        description="Optional client-assigned event ID (UUID). If provided, the "
+        "resulting MessageEvent will use this ID instead of generating one.",
+    )
 
     def create_message(self) -> Message:
         return Message(role=self.role, content=self.content)

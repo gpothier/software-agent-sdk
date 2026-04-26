@@ -7,7 +7,7 @@ import time
 import uuid
 from collections.abc import Mapping
 from queue import Empty, Queue
-from typing import TYPE_CHECKING, SupportsIndex, overload
+from typing import TYPE_CHECKING, Any, SupportsIndex, overload
 from urllib.parse import urlparse
 
 import httpx
@@ -921,19 +921,26 @@ class RemoteConversation(BaseConversation):
         )
 
     @observe(name="conversation.send_message")
-    def send_message(self, message: str | Message, sender: str | None = None) -> None:
+    def send_message(
+        self,
+        message: str | Message,
+        sender: str | None = None,
+        event_id: str | None = None,
+    ) -> None:
         if isinstance(message, str):
             message = Message(role="user", content=[TextContent(text=message)])
         assert message.role == "user", (
             "Only user messages are allowed to be sent to the agent."
         )
-        payload = {
+        payload: dict[str, Any] = {
             "role": message.role,
             "content": [c.model_dump() for c in message.content],
             "run": False,  # Mirror local semantics; explicit run() must be called
         }
         if sender is not None:
             payload["sender"] = sender
+        if event_id is not None:
+            payload["event_id"] = event_id
         _send_request(
             self._client,
             "POST",
