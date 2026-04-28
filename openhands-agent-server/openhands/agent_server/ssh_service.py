@@ -265,8 +265,10 @@ class SSHService:
 
     async def _start_sshd_process(self) -> None:
         """Start the sshd server process."""
-        # Run sshd in foreground mode (-D) on the specified port
-        cmd = f"/usr/sbin/sshd -D -p {self.port}"
+        # Run sshd in foreground mode (-D) on the specified port.
+        # PidFile is suppressed because the process is managed via asyncio subprocess.
+        # Without this, sshd tries to write /run/sshd.pid which requires root.
+        cmd = f"/usr/sbin/sshd -D -p {self.port} -o PidFile=/dev/null"
 
         # Start the process
         self.process = await asyncio.create_subprocess_shell(
