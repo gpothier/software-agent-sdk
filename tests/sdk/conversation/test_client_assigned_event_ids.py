@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from openhands.sdk import Agent, LLM, Message
+from openhands.sdk import LLM, Agent, Message
 from openhands.sdk.conversation import Conversation
 from openhands.sdk.conversation.request import SendMessageRequest
 from openhands.sdk.event import MessageEvent
@@ -59,7 +59,9 @@ class TestLocalConversationClientAssignedEventIds:
 
         # Check that the event was created with the provided ID
         events = list(conversation._state.events)
-        user_messages = [e for e in events if isinstance(e, MessageEvent) and e.source == "user"]
+        user_messages = [
+            e for e in events if isinstance(e, MessageEvent) and e.source == "user"
+        ]
         assert len(user_messages) == 1
         assert user_messages[0].id == event_id
 
@@ -79,7 +81,9 @@ class TestLocalConversationClientAssignedEventIds:
 
         # Check that the event was created with a generated UUID
         events = list(conversation._state.events)
-        user_messages = [e for e in events if isinstance(e, MessageEvent) and e.source == "user"]
+        user_messages = [
+            e for e in events if isinstance(e, MessageEvent) and e.source == "user"
+        ]
         assert len(user_messages) == 1
         # Verify it's a valid UUID format
         uuid.UUID(user_messages[0].id)  # This will raise if not a valid UUID
@@ -87,7 +91,7 @@ class TestLocalConversationClientAssignedEventIds:
         conversation.close()
 
     def test_send_message_string_uses_provided_event_id(self, minimal_agent, tmp_path):
-        """When sending a string message with event_id, it should use the provided ID."""
+        """When sending a string message with event_id, it should use the provided ID."""  # noqa: E501
         event_id = str(uuid.uuid4())
 
         conversation = Conversation(
@@ -101,7 +105,9 @@ class TestLocalConversationClientAssignedEventIds:
 
         # Check that the event was created with the provided ID
         events = list(conversation._state.events)
-        user_messages = [e for e in events if isinstance(e, MessageEvent) and e.source == "user"]
+        user_messages = [
+            e for e in events if isinstance(e, MessageEvent) and e.source == "user"
+        ]
         assert len(user_messages) == 1
         assert user_messages[0].id == event_id
 

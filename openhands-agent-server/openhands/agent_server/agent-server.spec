@@ -93,6 +93,9 @@ a = Analysis(
         *collect_submodules("openhands.agent_server"),
 
         # Third-party dynamic imports
+        # rich._unicode_data uses importlib.import_module(".unicode17-0-0", ...) at
+        # runtime; PyInstaller's static analysis misses it, so we collect explicitly.
+        *collect_submodules("rich._unicode_data"),
         *collect_submodules("tiktoken"),
         *collect_submodules("tiktoken_ext"),
         *collect_submodules("litellm"),
