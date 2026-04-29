@@ -1,7 +1,10 @@
 import json
 import threading
 import time
-from typing import TYPE_CHECKING, Literal
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import TYPE_CHECKING, Callable, Literal
 
 from openhands.sdk.llm import TextContent
 from openhands.sdk.logger import get_logger
@@ -31,6 +34,88 @@ from openhands.tools.terminal.terminal.tmux_pane_pool import (
 
 
 logger = get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Bash event side-channel helpers
+# ---------------------------------------------------------------------------
+
+_bash_events_dir_cache: Path | None = None
+_bash_events_dir_lock = threading.Lock()
+
+
+def _get_bash_events_dir() -> Path | None:
+    """Return the bash_events_dir from the agent server config, or None."""
+    global _bash_events_dir_cache
+    if _bash_events_dir_cache is not None:
+        return _bash_events_dir_cache
+    with _bash_events_dir_lock:
+        if _bash_events_dir_cache is not None:
+            return _bash_events_dir_cache
+        try:
+            from openhands.agent_server.config import get_default_config  # type: ignore[import]
+
+            _bash_events_dir_cache = get_default_config().bash_events_dir
+        except Exception:
+            _bash_events_dir_cache = None  # Not running inside agent server
+    return _bash_events_dir_cache
+
+
+def _ts_str(dt: datetime) -> str:
+    """Return YYYYMMDDHHMMSS timestamp string used in bash event filenames."""
+    return dt.strftime("%Y%m%d%H%M%S")
+
+
+def _write_bash_event_file(events_dir: Path, filename: str, data: dict) -> None:
+    events_dir.mkdir(parents=True, exist_ok=True)
+    (events_dir / filename).write_text(json.dumps(data, indent=2))
+
+
+def _write_bash_command(
+    events_dir: Path, command_id: uuid.UUID, command: str, cwd: str | None
+) -> None:
+    """Write a BashCommand event file (same format as BashEventService)."""
+    now = datetime.now(timezone.utc)
+    filename = f"{_ts_str(now)}_BashCommand_{command_id.hex}"
+    _write_bash_event_file(
+        events_dir,
+        filename,
+        {
+            "kind": "BashCommand",
+            "id": command_id.hex,
+            "timestamp": now.isoformat(),
+            "command": command,
+            "cwd": cwd,
+            "timeout": 300,
+        },
+    )
+
+
+def _write_bash_output(
+    events_dir: Path,
+    command_id: uuid.UUID,
+    order: int,
+    stdout: str | None,
+    exit_code: int | None,
+) -> None:
+    """Write a BashOutput event file (same format as BashEventService)."""
+    now = datetime.now(timezone.utc)
+    output_id = uuid.uuid4()
+    filename = f"{_ts_str(now)}_BashOutput_{command_id.hex}_{output_id.hex}"
+    _write_bash_event_file(
+        events_dir,
+        filename,
+        {
+            "kind": "BashOutput",
+            "id": output_id.hex,
+            "timestamp": now.isoformat(),
+            "command_id": command_id.hex,
+            "order": order,
+            "exit_code": exit_code,
+            "stdout": stdout,
+            "stderr": None,
+        },
+    )
 
 
 class TerminalExecutor(ToolExecutor[TerminalAction, TerminalObservation]):
@@ -269,6 +354,70 @@ class TerminalExecutor(ToolExecutor[TerminalAction, TerminalObservation]):
         return observation
 
     # ------------------------------------------------------------------
+    # Bash event side-channel
+    # ------------------------------------------------------------------
+
+    def _setup_bash_tracking(
+        self, action: TerminalAction
+    ) -> tuple[
+        Callable[[str, int], None] | None,
+        uuid.UUID | None,
+        Path | None,
+        list[int],
+    ]:
+        """Set up bash event tracking for a command execution.
+
+        Returns (on_chunk, command_id, events_dir, chunk_order_state).
+        All are None/empty when tracking is disabled (no agent server or is_input).
+        """
+        chunk_order_state: list[int] = [0]
+
+        if action.is_input or not action.command.strip():
+            return None, None, None, chunk_order_state
+
+        events_dir = _get_bash_events_dir()
+        if events_dir is None:
+            return None, None, None, chunk_order_state
+
+        command_id = uuid.uuid4()
+        try:
+            _write_bash_command(events_dir, command_id, action.command.strip(), self._working_dir)
+        except Exception as e:
+            logger.warning(f"Failed to write BashCommand event: {e}")
+            return None, None, None, chunk_order_state
+
+        def on_chunk(content: str, order: int) -> None:
+            chunk_order_state[0] = order + 1
+            try:
+                _write_bash_output(events_dir, command_id, order, stdout=content, exit_code=None)
+            except Exception as exc:
+                logger.warning(f"Failed to write bash output chunk: {exc}")
+
+        return on_chunk, command_id, events_dir, chunk_order_state
+
+    def _finalize_bash_tracking(
+        self,
+        events_dir: Path | None,
+        command_id: uuid.UUID | None,
+        chunk_order_state: list[int],
+        observation: TerminalObservation,
+    ) -> None:
+        """Write the final BashOutput event (with exit_code) after execution."""
+        if events_dir is None or command_id is None:
+            return
+        final_exit_code = observation.exit_code if observation.exit_code is not None else -1
+        try:
+            _write_bash_output(
+                events_dir,
+                command_id,
+                chunk_order_state[0],
+                stdout=observation.text or None,
+                exit_code=final_exit_code,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to write final BashOutput event: {e}")
+
+    # ------------------------------------------------------------------
     # Reset
     # ------------------------------------------------------------------
 
@@ -321,6 +470,8 @@ class TerminalExecutor(ToolExecutor[TerminalAction, TerminalObservation]):
         conversation: "LocalConversation | None" = None,
     ) -> TerminalObservation:
         """Execute *action* in single-session (non-pool) mode."""
+        on_chunk, command_id, events_dir, chunk_order_state = self._setup_bash_tracking(action)
+
         if action.reset or self.session._closed:
             reset_result = self._reset_single_session()
 
@@ -332,7 +483,8 @@ class TerminalExecutor(ToolExecutor[TerminalAction, TerminalObservation]):
                     is_input=False,
                 )
                 self._export_envs(command_action, conversation, session=session)
-                command_result = session.execute(command_action)
+                command_result = session.execute(command_action, on_chunk=on_chunk)
+                self._finalize_bash_tracking(events_dir, command_id, chunk_order_state, command_result)
 
                 reset_text = reset_result.text
                 command_text = command_result.text
@@ -349,7 +501,8 @@ class TerminalExecutor(ToolExecutor[TerminalAction, TerminalObservation]):
                 observation = reset_result
         else:
             self._export_envs(action, conversation, session=self.session)
-            observation = self.session.execute(action)
+            observation = self.session.execute(action, on_chunk=on_chunk)
+            self._finalize_bash_tracking(events_dir, command_id, chunk_order_state, observation)
 
         return self._mask_observation(observation, conversation)
 
@@ -364,6 +517,8 @@ class TerminalExecutor(ToolExecutor[TerminalAction, TerminalObservation]):
         managed by the pool's context manager so there is exactly one
         checkout and one checkin per call.
         """
+        on_chunk, command_id, events_dir, chunk_order_state = self._setup_bash_tracking(action)
+
         with self._pool.pane() as handle:  # type: ignore[union-attr]
             reset_text: str | None = None
 
@@ -395,7 +550,8 @@ class TerminalExecutor(ToolExecutor[TerminalAction, TerminalObservation]):
                 )
             )
             self._export_envs(cmd_action, conversation, session=session)
-            observation = session.execute(cmd_action)
+            observation = session.execute(cmd_action, on_chunk=on_chunk)
+            self._finalize_bash_tracking(events_dir, command_id, chunk_order_state, observation)
 
             if reset_text is not None:
                 observation = observation.model_copy(

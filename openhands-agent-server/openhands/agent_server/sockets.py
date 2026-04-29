@@ -7,8 +7,17 @@ connections, so we support the `session_api_key` query param. For non-browser
 clients (e.g. Python/Node), we also support authenticating via headers.
 """
 
+import asyncio
+import fcntl
+import json
 import logging
-from dataclasses import dataclass
+import os
+import pty
+import select
+import struct
+import termios
+import threading
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
@@ -363,3 +372,204 @@ class _BashWebSocketSubscriber(Subscriber[BashEventBase]):
 
     async def __call__(self, event: BashEventBase):
         await _send_bash_event(event, self.websocket)
+
+
+# ---------------------------------------------------------------------------
+# Shell PTY session
+# ---------------------------------------------------------------------------
+
+_SHELL_REPLAY_BUFFER_SIZE = 128 * 1024  # 128 KB ring buffer for reconnect replay
+
+
+@dataclass
+class _ShellSession:
+    """A persistent PTY shell session for the human terminal tab."""
+
+    master_fd: int
+    pid: int
+    replay_buffer: bytearray = field(default_factory=bytearray)
+    output_queues: list[asyncio.Queue] = field(default_factory=list)
+    loop: asyncio.AbstractEventLoop | None = None
+    _reader_thread: threading.Thread | None = None
+    _stop_event: threading.Event = field(default_factory=threading.Event)
+
+    def is_alive(self) -> bool:
+        try:
+            os.kill(self.pid, 0)
+            return True
+        except (ProcessLookupError, PermissionError):
+            return False
+
+    def start_reader(self, loop: asyncio.AbstractEventLoop) -> None:
+        self.loop = loop
+        self._stop_event.clear()
+        self._reader_thread = threading.Thread(target=self._read_loop, daemon=True)
+        self._reader_thread.start()
+
+    def _read_loop(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                r, _, _ = select.select([self.master_fd], [], [], 0.05)
+                if not r:
+                    continue
+                data = os.read(self.master_fd, 4096)
+                if not data:
+                    break
+                # Update replay buffer
+                self.replay_buffer.extend(data)
+                if len(self.replay_buffer) > _SHELL_REPLAY_BUFFER_SIZE:
+                    self.replay_buffer = self.replay_buffer[-_SHELL_REPLAY_BUFFER_SIZE:]
+                # Notify all subscribers
+                if self.loop:
+                    for q in list(self.output_queues):
+                        asyncio.run_coroutine_threadsafe(q.put(data), self.loop)
+            except OSError:
+                break
+        # Signal EOF to all subscribers
+        if self.loop:
+            for q in list(self.output_queues):
+                asyncio.run_coroutine_threadsafe(q.put(None), self.loop)
+
+    def set_winsize(self, rows: int, cols: int) -> None:
+        try:
+            winsize = struct.pack("HHHH", rows, cols, 0, 0)
+            fcntl.ioctl(self.master_fd, termios.TIOCSWINSZ, winsize)
+        except OSError:
+            pass
+
+    def write(self, data: bytes) -> None:
+        try:
+            os.write(self.master_fd, data)
+        except OSError:
+            pass
+
+
+# One shell session per agent server instance (one per sandbox)
+_shell_session: _ShellSession | None = None
+_shell_lock = threading.Lock()
+
+
+def _create_shell_session() -> _ShellSession:
+    """Fork a bash child process under a PTY and return the session."""
+    master_fd, slave_fd = pty.openpty()
+
+    # Set initial window size (80×24)
+    winsize = struct.pack("HHHH", 24, 80, 0, 0)
+    fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
+
+    pid = os.fork()
+    if pid == 0:  # child
+        os.close(master_fd)
+        os.setsid()
+        fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
+        for fd in (0, 1, 2):
+            os.dup2(slave_fd, fd)
+        if slave_fd > 2:
+            os.close(slave_fd)
+        env = {
+            "TERM": "xterm-256color",
+            "HOME": os.environ.get("HOME", "/root"),
+            "PATH": os.environ.get("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"),
+            "SHELL": "/bin/bash",
+            "LANG": os.environ.get("LANG", "en_US.UTF-8"),
+        }
+        os.execve("/bin/bash", ["/bin/bash"], env)
+        os._exit(1)
+    else:  # parent
+        os.close(slave_fd)
+        return _ShellSession(master_fd=master_fd, pid=pid)
+
+
+def _get_or_create_shell_session() -> _ShellSession:
+    global _shell_session
+    with _shell_lock:
+        if _shell_session is None or not _shell_session.is_alive():
+            _shell_session = _create_shell_session()
+        return _shell_session
+
+
+@sockets_router.websocket("/shell")
+async def shell_socket(
+    websocket: WebSocket,
+    session_api_key: Annotated[str | None, Query(alias="session_api_key")] = None,
+):
+    """WebSocket endpoint for a persistent interactive shell session.
+
+    Provides a raw PTY shell (bash) that persists across WebSocket disconnects.
+    The browser xterm.js connects via AttachAddon; keystrokes flow in as bytes,
+    terminal output flows out as bytes.
+
+    Resize: send a JSON text frame ``{"type":"resize","cols":N,"rows":M}``.
+    """
+    if not await _accept_authenticated_websocket(websocket, session_api_key):
+        return
+
+    logger.info("Shell WebSocket connected")
+    loop = asyncio.get_event_loop()
+
+    session = _get_or_create_shell_session()
+
+    # Start the PTY reader thread if not running
+    if session._reader_thread is None or not session._reader_thread.is_alive():
+        session.start_reader(loop)
+    else:
+        session.loop = loop  # Update loop reference for this connection
+
+    # Subscribe this connection to PTY output
+    output_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+    session.output_queues.append(output_queue)
+
+    # Replay recent output so reconnected clients see the current state
+    if session.replay_buffer:
+        try:
+            await websocket.send_bytes(bytes(session.replay_buffer))
+        except Exception:
+            pass
+
+    async def send_output() -> None:
+        """Forward PTY output to the WebSocket."""
+        while True:
+            data = await output_queue.get()
+            if data is None:
+                break
+            try:
+                await websocket.send_bytes(data)
+            except Exception:
+                break
+
+    async def handle_input() -> None:
+        """Forward WebSocket input to the PTY."""
+        while True:
+            try:
+                message = await websocket.receive()
+                if message["type"] == "websocket.disconnect":
+                    break
+                raw_bytes = message.get("bytes")
+                if raw_bytes:
+                    session.write(raw_bytes)
+                else:
+                    text = message.get("text", "")
+                    if text:
+                        try:
+                            msg = json.loads(text)
+                            if msg.get("type") == "resize":
+                                session.set_winsize(
+                                    int(msg.get("rows", 24)),
+                                    int(msg.get("cols", 80)),
+                                )
+                        except (json.JSONDecodeError, ValueError):
+                            session.write(text.encode())
+            except WebSocketDisconnect:
+                break
+            except Exception as e:
+                logger.debug(f"Shell WebSocket input error: {e}")
+                break
+
+    try:
+        await asyncio.gather(send_output(), handle_input())
+    finally:
+        try:
+            session.output_queues.remove(output_queue)
+        except ValueError:
+            pass
+        logger.info("Shell WebSocket disconnected")

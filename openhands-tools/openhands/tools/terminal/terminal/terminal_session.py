@@ -2,6 +2,7 @@
 
 import re
 import time
+from collections.abc import Callable
 from enum import Enum
 
 from openhands.sdk.logger import get_logger
@@ -353,8 +354,20 @@ class TerminalSession(TerminalSessionBase):
         logger.debug(f"COMBINED OUTPUT: {combined_output}")
         return combined_output
 
-    def execute(self, action: TerminalAction) -> TerminalObservation:
-        """Execute a command using the terminal backend."""
+    def execute(
+        self,
+        action: TerminalAction,
+        on_chunk: Callable[[str, int], None] | None = None,
+    ) -> TerminalObservation:
+        """Execute a command using the terminal backend.
+
+        Args:
+            action: The terminal action to execute.
+            on_chunk: Optional callback for incremental output. Called as
+                ``on_chunk(text, order)`` when new output is detected during
+                the polling loop. ``order`` is a monotonically increasing int
+                (0, 1, 2, …) across calls for this command.
+        """
         if not self._initialized:
             raise RuntimeError("Unified session is not initialized")
 
@@ -411,6 +424,10 @@ class TerminalSession(TerminalSessionBase):
         start_time = time.time()
         last_change_time = start_time
         last_terminal_output = initial_terminal_output
+
+        # State for incremental chunk streaming
+        _chunk_order = 0
+        _last_streamed_output = ""
 
         # When prev command is still running, and we are trying to send a new command
         if (
@@ -501,6 +518,18 @@ class TerminalSession(TerminalSessionBase):
                 last_terminal_output = cur_terminal_output
                 last_change_time = time.time()
                 logger.debug(f"CONTENT UPDATED DETECTED at {last_change_time}")
+
+                # Emit incremental output chunk while command is still running
+                if on_chunk is not None and current_ps1_count == initial_ps1_count and not is_input:
+                    raw_so_far = self._combine_outputs_between_matches(
+                        cur_terminal_output, ps1_matches
+                    )
+                    output_so_far = _remove_command_prefix(raw_so_far, command)
+                    new_part = output_so_far[len(_last_streamed_output):]
+                    if new_part.strip():
+                        on_chunk(new_part, _chunk_order)
+                        _chunk_order += 1
+                        _last_streamed_output = output_so_far
 
             # 1) Execution completed:
             # Condition 1: A new prompt has appeared since the command started.
