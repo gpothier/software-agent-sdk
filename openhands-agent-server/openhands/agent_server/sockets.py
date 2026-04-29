@@ -566,7 +566,16 @@ async def shell_socket(
                 break
 
     try:
-        await asyncio.gather(send_output(), handle_input())
+        done, pending = await asyncio.wait(
+            [asyncio.create_task(send_output()), asyncio.create_task(handle_input())],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
     finally:
         try:
             session.output_queues.remove(output_queue)
