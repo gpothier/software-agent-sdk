@@ -505,7 +505,7 @@ async def shell_socket(
         return
 
     logger.info("Shell WebSocket connected")
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     session = _get_or_create_shell_session()
 
