@@ -265,6 +265,11 @@ class SSHService:
 
     async def _start_sshd_process(self) -> None:
         """Start the sshd server process."""
+        # Create privilege separation directory if it doesn't exist
+        # /run is typically a tmpfs that gets cleared on container start
+        run_sshd_dir = Path("/run/sshd")
+        run_sshd_dir.mkdir(parents=True, exist_ok=True)
+        
         # Run sshd in foreground mode (-D) on the specified port.
         # PidFile is suppressed because the process is managed via asyncio subprocess.
         # Without this, sshd tries to write /run/sshd.pid which requires root.
