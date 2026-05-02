@@ -276,7 +276,9 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends openssh-server; \
     apt-get clean; rm -rf /var/lib/apt/lists/*; \
-    # Create SSH runtime directory
+    # Create SSH runtime directory (for image build time only)
+    # /run is a tmpfs that gets cleared when containers/VMs start, so this directory
+    # is recreated at runtime by ssh_service.py using sudo mkdir
     mkdir -p /run/sshd; \
     chmod 755 /run/sshd; \
     # Create host key directory with proper permissions for runtime key generation

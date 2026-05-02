@@ -266,10 +266,18 @@ class SSHService:
     async def _start_sshd_process(self) -> None:
         """Start the sshd server process."""
         # Create privilege separation directory if it doesn't exist
-        # /run is typically a tmpfs that gets cleared on container start
-        run_sshd_dir = Path("/run/sshd")
-        run_sshd_dir.mkdir(parents=True, exist_ok=True)
-        
+        # /run is a tmpfs that gets cleared when containers/VMs start
+        # Use sudo since the openhands user has NOPASSWD sudo access
+        try:
+            mkdir_proc = await asyncio.create_subprocess_exec(
+                'sudo', 'mkdir', '-p', '/run/sshd',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await mkdir_proc.wait()
+        except Exception as e:
+            logger.warning(f'Failed to create /run/sshd: {e}')
+
         # Run sshd in foreground mode (-D) on the specified port.
         # PidFile is suppressed because the process is managed via asyncio subprocess.
         # Without this, sshd tries to write /run/sshd.pid which requires root.
