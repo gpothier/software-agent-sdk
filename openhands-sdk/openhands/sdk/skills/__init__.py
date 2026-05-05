@@ -59,12 +59,14 @@ from openhands.sdk.skills.skill import (
     Skill,
     SkillInfo,
     SkillResources,
+    demote_skill,
     load_available_skills,
     load_project_skills,
     load_public_skills,
     load_skills_from_dir,
     load_user_skills,
     merge_skills_by_name,
+    promote_skill,
     to_prompt,
 )
 
@@ -121,6 +123,8 @@ __all__ = [
     "load_available_skills",
     "merge_skills_by_name",
     "to_prompt",
+    "promote_skill",
+    "demote_skill",
     # Triggers
     "BaseTrigger",
     "KeywordTrigger",

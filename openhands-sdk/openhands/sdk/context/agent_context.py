@@ -39,6 +39,23 @@ logger = get_logger(__name__)
 PROMPT_DIR = pathlib.Path(__file__).parent / "prompts" / "templates"
 
 
+def _read_skill_content(skill: Skill) -> str | None:
+    """Return the current content of an active skill, re-reading from disk.
+
+    Returns None if the skill has a source path but the file no longer exists
+    (caller should drop the skill from the prompt for this turn).
+    Falls back to the in-memory content for programmatically created skills
+    that have no source path.
+    """
+    if skill.source:
+        try:
+            return pathlib.Path(skill.source).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            logger.warning(f"skill source file missing, dropping from prompt: {skill.source}")
+            return None
+    return skill.content or None
+
+
 class AgentContext(BaseModel):
     """Central structure for managing prompt extension.
 
@@ -300,7 +317,14 @@ class AgentContext(BaseModel):
         - Legacy with trigger=None: Full content in <REPO_CONTEXT> (always active)
         - Legacy with triggers: Listed in <available_skills>, injected on trigger
         """
-        repo_skills, available_skills = self._partition_skills()
+        repo_skills_raw, available_skills = self._partition_skills()
+        # Re-read content from disk on each turn; drop skills whose file is gone
+        repo_skills: list[Skill] = []
+        for s in repo_skills_raw:
+            content = _read_skill_content(s)
+            if content is None:
+                continue
+            repo_skills.append(s.model_copy(update={"content": content}))
 
         # Gate vendor-specific repo skills based on model family.
         if llm_model or llm_model_canonical:
