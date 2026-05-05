@@ -8,6 +8,7 @@ from pydantic import Field
 from rich.text import Text
 
 from openhands.sdk.skills.execute import render_content_with_commands
+from openhands.sdk.skills.skill import promote_skill
 from openhands.sdk.tool.tool import (
     Action,
     DeclaredResources,
@@ -101,11 +102,31 @@ class InvokeSkillExecutor(ToolExecutor):
                 name, f"Unknown skill '{name}'. Available skills: {available}."
             )
 
-        rendered = render_content_with_commands(match.content, working_dir=working_dir)
+        # Read fresh content from disk; fall back to in-memory content for
+        # programmatically created skills that have no source path.
+        if match.source:
+            try:
+                content = Path(match.source).read_text(encoding="utf-8")
+            except FileNotFoundError:
+                return self._error(
+                    name, f"Skill file not found: {match.source}. The skill may have been deleted."
+                )
+        else:
+            content = match.content
+
+        rendered = render_content_with_commands(content, working_dir=working_dir)
         rendered = self._append_skill_location_footer(
             rendered, match.source, working_dir
         )
         self._record_invocation(conversation, name)
+
+        # Promote the skill from discovered (agentskills-format) to active
+        # (trigger=None) so it appears in REPO_CONTEXT on subsequent turns.
+        if conversation is not None:
+            ctx = conversation.state.agent.agent_context
+            if ctx is not None:
+                promote_skill(ctx, name)
+
         return InvokeSkillObservation.from_text(text=rendered, skill_name=name)
 
     @staticmethod

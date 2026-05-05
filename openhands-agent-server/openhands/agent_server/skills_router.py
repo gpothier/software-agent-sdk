@@ -109,6 +109,32 @@ class SkillInfo(BaseModel):
     source: str | None = None
     description: str | None = None
     is_agentskills_format: bool = False
+    always: bool = False
+
+
+class DiscoverRequest(BaseModel):
+    """Request body for discovering project skills."""
+
+    project_dir: str = Field(description="Workspace directory path for project skills")
+    workspace_base: str | None = Field(
+        default=None,
+        description=(
+            "Base workspace directory (e.g., /workspace/project). "
+            "When provided, git repositories immediately under this path "
+            "are also scanned for skills."
+        ),
+    )
+
+
+class DiscoverSkillInfo(BaseModel):
+    """Metadata for a discovered skill (no content)."""
+
+    name: str
+    source: str | None = None
+    description: str | None = None
+    always: bool = False
+    triggers: list[str] = Field(default_factory=list)
+    is_agentskills_format: bool = False
 
 
 class SkillsResponse(BaseModel):
@@ -207,3 +233,44 @@ def sync_skills() -> SyncResponse:
         status="success" if success else "error",
         message=message,
     )
+
+
+@skills_router.post("/discover", response_model=list[DiscoverSkillInfo])
+def discover_skills(request: DiscoverRequest) -> list[DiscoverSkillInfo]:
+    """Discover project skills from the workspace directory.
+
+    Loads only project-level skills (AGENTS.md, .cursorrules, and files in
+    .agents/skills/). Returns metadata only (no content). Content is fetched
+    on demand via the per-conversation skill endpoints.
+
+    This is the clean replacement for the confusingly-named POST /skills.
+    Use this endpoint to find what skills are available in a project before
+    or during a conversation.
+
+    Args:
+        request: DiscoverRequest with project_dir and optional workspace_base.
+
+    Returns:
+        List of DiscoverSkillInfo with metadata for each discovered skill.
+    """
+    result = load_all_skills(
+        load_public=False,
+        load_user=False,
+        load_project=True,
+        load_org=False,
+        project_dir=request.project_dir,
+        workspace_base=request.workspace_base,
+        sandbox_exposed_urls=None,
+        marketplace_path=None,
+    )
+    return [
+        DiscoverSkillInfo(
+            name=info.name,
+            source=info.source,
+            description=info.description,
+            always=info.always,
+            triggers=info.triggers,
+            is_agentskills_format=info.is_agentskills_format,
+        )
+        for info in (skill.to_skill_info() for skill in result.skills)
+    ]

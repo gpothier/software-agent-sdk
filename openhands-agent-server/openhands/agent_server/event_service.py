@@ -798,3 +798,77 @@ class EventService:
 
     def is_open(self) -> bool:
         return bool(self._conversation)
+
+    # ------------------------------------------------------------------
+    # Skill management
+    # ------------------------------------------------------------------
+
+    def _get_agent_context(self):
+        """Return the live agent_context if the conversation is running,
+        falling back to the stored snapshot otherwise."""
+        from openhands.sdk.context.agent_context import AgentContext  # local import to avoid cycles
+
+        if self._conversation is not None:
+            return self._conversation.state.agent.agent_context
+        ctx = self.stored.agent.agent_context
+        return ctx if isinstance(ctx, AgentContext) else None
+
+    def get_skills(self):
+        """Return all skills for this conversation with their current state.
+
+        Returns a list of dicts with keys: name, source, description, always,
+        triggers, state ("active" | "discovered").
+        """
+        from openhands.sdk.skills import SkillInfo
+
+        ctx = self._get_agent_context()
+        if ctx is None:
+            return []
+
+        result = []
+        for s in ctx.skills:
+            if not s.is_agentskills_format and s.trigger is None:
+                state = "active"
+            else:
+                state = "discovered"
+            result.append({"skill": s.to_skill_info(), "state": state})
+        return result
+
+    async def activate_skill(self, name: str):
+        """Promote a skill from discovered to active.
+
+        Returns the updated SkillInfo dict on success, None if not found.
+        """
+        from openhands.sdk.skills.skill import promote_skill
+
+        ctx = self._get_agent_context()
+        if ctx is None:
+            return None
+        if not promote_skill(ctx, name):
+            return None
+        # Mirror the change in stored so save_meta() persists it across restarts.
+        stored_ctx = self.stored.agent.agent_context
+        if stored_ctx is not None:
+            promote_skill(stored_ctx, name)
+        await self.save_meta()
+        skill = next((s for s in ctx.skills if s.name == name), None)
+        return skill.to_skill_info() if skill else None
+
+    async def deactivate_skill(self, name: str):
+        """Demote an active skill back to discovered.
+
+        Returns the updated SkillInfo dict on success, None if not found or always-on.
+        """
+        from openhands.sdk.skills.skill import demote_skill
+
+        ctx = self._get_agent_context()
+        if ctx is None:
+            return None
+        if not demote_skill(ctx, name):
+            return None
+        stored_ctx = self.stored.agent.agent_context
+        if stored_ctx is not None:
+            demote_skill(stored_ctx, name)
+        await self.save_meta()
+        skill = next((s for s in ctx.skills if s.name == name), None)
+        return skill.to_skill_info() if skill else None

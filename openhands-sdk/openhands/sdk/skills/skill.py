@@ -3,7 +3,11 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Annotated, ClassVar, Literal, Union
+from typing import TYPE_CHECKING, Annotated, ClassVar, Literal, Union
+
+if TYPE_CHECKING:
+    from openhands.sdk.context.agent_context import AgentContext
+
 from xml.sax.saxutils import escape as xml_escape
 
 import frontmatter
@@ -51,6 +55,7 @@ class SkillInfo(BaseModel):
     source: str | None = None
     description: str | None = None
     is_agentskills_format: bool = False
+    always: bool = False
 
 
 class SkillResources(BaseModel):
@@ -160,6 +165,15 @@ class Skill(BaseModel):
             "disclosure: always listed in <available_skills> with name, "
             "description, and location. If the skill also has triggers, content "
             "is auto-injected when triggered AND agent can read file anytime."
+        ),
+    )
+    always: bool = Field(
+        default=False,
+        description=(
+            "Whether this skill is always active in the system prompt, regardless "
+            "of activation state. Set automatically for well-known project instruction "
+            "files (AGENTS.md, .cursorrules, etc.) and for skills with 'always: true' "
+            "in their frontmatter. Always-on skills cannot be deactivated by the user."
         ),
     )
 
@@ -424,6 +438,9 @@ class Skill(BaseModel):
             k: v for k, v in agentskills_fields.items() if v is not None
         }
 
+        # 'always: true' in frontmatter marks the skill as always-on (always in REPO_CONTEXT)
+        always = bool(metadata_dict.get("always", False))
+
         # Get trigger keywords from metadata
         keywords = metadata_dict.get("triggers", [])
         if not isinstance(keywords, list):
@@ -453,6 +470,7 @@ class Skill(BaseModel):
                 mcp_tools=mcp_tools,
                 resources=resources,
                 is_agentskills_format=is_agentskills_format,
+                always=always,
                 **agentskills_fields,
             )
 
@@ -465,10 +483,10 @@ class Skill(BaseModel):
                 mcp_tools=mcp_tools,
                 resources=resources,
                 is_agentskills_format=is_agentskills_format,
+                always=always,
                 **agentskills_fields,
             )
         else:
-            # No triggers, default to None (always active)
             return Skill(
                 name=agent_name,
                 content=content,
@@ -477,6 +495,7 @@ class Skill(BaseModel):
                 mcp_tools=mcp_tools,
                 resources=resources,
                 is_agentskills_format=is_agentskills_format,
+                always=always,
                 **agentskills_fields,
             )
 
@@ -484,8 +503,8 @@ class Skill(BaseModel):
     def _handle_third_party(cls, path: Path, file_content: str) -> Union["Skill", None]:
         """Handle third-party skill files (e.g., .cursorrules, AGENTS.md).
 
-        Creates a Skill with None trigger (always active) if the file type
-        is recognized.
+        Creates a Skill with always=True and trigger=None (always active) if the
+        file type is recognized.
         """
         skill_name = cls.PATH_TO_THIRD_PARTY_SKILL_NAME.get(path.name.lower())
 
@@ -495,6 +514,7 @@ class Skill(BaseModel):
                 content=file_content,
                 source=str(path),
                 trigger=None,
+                always=True,
             )
 
         return None
@@ -626,6 +646,7 @@ class Skill(BaseModel):
             source=self.source,
             description=self.description,
             is_agentskills_format=self.is_agentskills_format,
+            always=self.always,
         )
 
     def render_content(
@@ -1320,3 +1341,42 @@ def to_prompt(skills: list[Skill], max_description_length: int = 1024) -> str:
 
     lines.append("</available_skills>")
     return "\n".join(lines)
+
+
+def promote_skill(agent_context: "AgentContext", name: str) -> bool:
+    """Promote a skill from discovered (agentskills-format) to active (trigger=None).
+
+    Operates in-place on agent_context.skills. Returns True if the skill was found
+    and promoted, False if not found or already active.
+
+    Args:
+        agent_context: The AgentContext whose skill list to update.
+        name: The name of the skill to promote.
+    """
+    for i, skill in enumerate(agent_context.skills):
+        if skill.name == name and skill.is_agentskills_format:
+            agent_context.skills[i] = skill.model_copy(
+                update={"is_agentskills_format": False, "trigger": None, "content": ""}
+            )
+            return True
+    return False
+
+
+def demote_skill(agent_context: "AgentContext", name: str) -> bool:
+    """Demote an active skill back to discovered (agentskills-format).
+
+    Operates in-place on agent_context.skills. Returns True if the skill was found
+    and demoted, False if not found, already discovered, or marked always-on.
+
+    Args:
+        agent_context: The AgentContext whose skill list to update.
+        name: The name of the skill to demote.
+    """
+    for i, skill in enumerate(agent_context.skills):
+        if skill.name == name and not skill.is_agentskills_format and not skill.always:
+            agent_context.skills[i] = skill.model_copy(
+                update={"is_agentskills_format": True, "content": ""}
+            )
+            return True
+    return False
+

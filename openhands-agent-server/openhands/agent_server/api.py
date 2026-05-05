@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.requests import Request
 
 from openhands.agent_server.bash_router import bash_router
+from openhands.agent_server.conversation_skills_router import conversation_skills_router
 from openhands.agent_server.config import (
     Config,
     get_default_config,
@@ -261,6 +262,7 @@ def _add_api_routes(app: FastAPI, config: Config) -> None:
     api_router.include_router(event_router)
     api_router.include_router(conversation_router)
     api_router.include_router(conversation_router_acp)
+    api_router.include_router(conversation_skills_router)
     api_router.include_router(tool_router)
     api_router.include_router(bash_router)
     api_router.include_router(git_router)

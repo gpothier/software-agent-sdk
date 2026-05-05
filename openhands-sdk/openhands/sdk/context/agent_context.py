@@ -25,6 +25,23 @@ logger = get_logger(__name__)
 PROMPT_DIR = pathlib.Path(__file__).parent / "prompts" / "templates"
 
 
+def _read_skill_content(skill: Skill) -> str | None:
+    """Return the current content of an active skill, re-reading from disk.
+
+    Returns None if the skill has a source path but the file no longer exists
+    (caller should drop the skill from the prompt for this turn).
+    Falls back to the in-memory content for programmatically created skills
+    that have no source path.
+    """
+    if skill.source:
+        try:
+            return pathlib.Path(skill.source).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            logger.warning(f"skill source file missing, dropping from prompt: {skill.source}")
+            return None
+    return skill.content or None
+
+
 class AgentContext(BaseModel):
     """Central structure for managing prompt extension.
 
@@ -200,20 +217,23 @@ class AgentContext(BaseModel):
         """
         # Categorize skills based on format and trigger:
         # - AgentSkills-format: always in available_skills (progressive disclosure)
-        # - Legacy: trigger=None -> REPO_CONTEXT, else -> available_skills
+        # - trigger=None: full content in REPO_CONTEXT, re-read from disk each turn
+        # - has trigger: listed in available_skills
         repo_skills: list[Skill] = []
         available_skills: list[Skill] = []
 
         for s in self.skills:
             if s.is_agentskills_format:
-                # AgentSkills: always list (triggers also auto-inject via
-                # get_user_message_suffix)
+                # Discoverable: listed in <available_skills>, content not in prompt
                 available_skills.append(s)
             elif s.trigger is None:
-                # Legacy OpenHands: no trigger = full content in REPO_CONTEXT
-                repo_skills.append(s)
+                # Active: re-read content from disk on each turn; drop if file gone
+                content = _read_skill_content(s)
+                if content is None:
+                    continue
+                repo_skills.append(s.model_copy(update={"content": content}))
             else:
-                # Legacy OpenHands: has trigger = list in available_skills
+                # Legacy trigger-based: listed in available_skills
                 available_skills.append(s)
 
         # Gate vendor-specific repo skills based on model family.
