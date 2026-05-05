@@ -517,6 +517,21 @@ class Agent(CriticMixin, ResponseDispatchMixin, AgentBase):
 
         _messages = _messages_or_condensation
 
+        # Re-evaluate dynamic context every turn so that skill activations and
+        # deactivations (which mutate agent_context.skills in-place) take effect
+        # for the current LLM call without requiring a new conversation.
+        # The SystemPromptEvent is stored frozen in the event history; we patch
+        # the prepared message list here so the event log stays intact.
+        if _messages and _messages[0].role == "system":
+            fresh_dynamic = self.get_dynamic_context(state)
+            static_block = _messages[0].content[0]  # system_prompt.text (cacheable)
+            _messages[0] = Message(
+                role="system",
+                content=[static_block, TextContent(text=fresh_dynamic)]
+                if fresh_dynamic
+                else [static_block],
+            )
+
         logger.debug(
             "Sending messages to LLM: "
             f"{json.dumps([m.model_dump() for m in _messages[1:]], indent=2)}"
