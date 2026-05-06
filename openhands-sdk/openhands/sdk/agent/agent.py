@@ -38,6 +38,7 @@ from openhands.sdk.event import (
     Event,
     MessageEvent,
     ObservationEvent,
+    SkillsUpdatedEvent,
     SystemPromptEvent,
     TokenEvent,
     UserRejectObservation,
@@ -472,6 +473,50 @@ class Agent(CriticMixin, ResponseDispatchMixin, AgentBase):
             ),
         )
 
+    def _refresh_discovered_skills(
+        self,
+        working_dir: str,
+        on_event: ConversationCallbackType,
+    ) -> None:
+        """Re-scan the workspace for new skills and emit SkillsUpdatedEvent if any are found.
+
+        Runs on every turn.  Newly discovered skills (e.g. in a repo the agent
+        cloned during a previous turn) are appended to agent_context.skills so
+        the dynamic context picks them up immediately.  Already-known skills
+        (matched by name) are never duplicated.
+
+        Emits SkillsUpdatedEvent only when at least one skill is new.
+        """
+        from openhands.sdk.skills.skill import load_project_skills
+
+        if not self.agent_context:
+            return
+
+        workspace_base = (
+            working_dir.rsplit("/worktrees/", 1)[0]
+            if "/worktrees/" in working_dir
+            else working_dir
+        )
+
+        try:
+            rediscovered = load_project_skills(
+                workspace_base,
+                discover_all_repos=True,
+                workspace_base=workspace_base,
+            )
+        except Exception:
+            logger.debug("Skill re-discovery failed", exc_info=True)
+            return
+
+        existing_names = {s.name for s in self.agent_context.skills}
+        added = [s for s in rediscovered if s.name not in existing_names]
+        if not added:
+            return
+
+        self.agent_context.skills.extend(added)
+        logger.debug(f"New skills discovered: {[s.name for s in added]}")
+        on_event(SkillsUpdatedEvent(added=[s.name for s in added]))
+
     @observe(name="agent.step", ignore_inputs=["state", "on_event"])
     def step(
         self,
@@ -516,6 +561,15 @@ class Agent(CriticMixin, ResponseDispatchMixin, AgentBase):
             return
 
         _messages = _messages_or_condensation
+
+        # Discover any skills added to the workspace since the last turn (e.g. by
+        # the agent cloning a new git repo).  New skills are appended to
+        # agent_context.skills and a SkillsUpdatedEvent is emitted when found.
+        # This runs before the dynamic context patch so newly-added skills appear
+        # in the system prompt for the current LLM call.
+        working_dir = getattr(getattr(state, "workspace", None), "working_dir", None)
+        if working_dir:
+            self._refresh_discovered_skills(working_dir, on_event)
 
         # Re-evaluate dynamic context every turn so that skill activations and
         # deactivations (which mutate agent_context.skills in-place) take effect

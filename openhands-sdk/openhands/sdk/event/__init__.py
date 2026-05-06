@@ -18,6 +18,7 @@ from openhands.sdk.event.llm_convertible import (
     SystemPromptEvent,
     UserRejectObservation,
 )
+from openhands.sdk.event.skills_updated import SkillsUpdatedEvent
 from openhands.sdk.event.streaming_delta import StreamingDeltaEvent
 from openhands.sdk.event.token import TokenEvent
 from openhands.sdk.event.types import EventID, ToolCallID
@@ -45,6 +46,7 @@ __all__ = [
     "ConversationStateUpdateEvent",
     "HookExecutionEvent",
     "LLMCompletionLogEvent",
+    "SkillsUpdatedEvent",
     "EventID",
     "ToolCallID",
 ]
