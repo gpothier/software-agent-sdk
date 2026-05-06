@@ -149,8 +149,16 @@ class DiscoverRequest(BaseModel):
         default=None,
         description=(
             "Base workspace directory (e.g., /workspace/project). "
-            "When provided, git repositories immediately under this path "
-            "are also scanned for skills."
+            "When discover_all_repos=true, this is used as the search root "
+            "for git repositories. If not provided, the heuristic in "
+            "load_project_skills is used."
+        ),
+    )
+    discover_all_repos: bool = Field(
+        default=False,
+        description=(
+            "If true, discover skills from all git repositories under "
+            "workspace_base (or project_dir if workspace_base is not set)."
         ),
     )
 
@@ -602,6 +610,7 @@ def discover_skills(request: DiscoverRequest) -> list[DiscoverSkillInfo]:
         workspace_base=request.workspace_base,
         sandbox_exposed_urls=None,
         marketplace_path=None,
+        discover_all_repos=request.discover_all_repos,
     )
     return [
         DiscoverSkillInfo(
