@@ -3,7 +3,7 @@ name: Agent Server
 
 on:
     push:
-        branches: [main, my]
+        branches: [main, my, openfeet]
         tags:
             - '*'  # Trigger on any tag (e.g., 1.0.0, 1.0.0a5, build-docker)
     pull_request:
@@ -156,8 +156,8 @@ jobs:
             - name: Set matrix
               id: set-matrix
               run: |
-                  if [[ "${{ github.ref }}" == "refs/heads/my" ]]; then
-                    # On 'my' branch: only python-amd64
+                  if [[ "${{ github.ref }}" == "refs/heads/my" || "${{ github.ref }}" == "refs/heads/openfeet" ]]; then
+                    # On 'my' and 'openfeet' branches: only python-amd64
                     echo 'matrix={"include":[{"variant":"python","arch":"amd64","base_image":"nikolaik/python-nodejs:python3.13-nodejs22-slim","runner":"ubuntu-24.04","platform":"linux/amd64"}]}' >> $GITHUB_OUTPUT
                   else
                     # On other branches: full matrix
@@ -183,8 +183,8 @@ jobs:
         env:
             IMAGE: ${{ inputs.image != '' && inputs.image || format('ghcr.io/{0}/agent-server', github.repository_owner) }}
             BASE_IMAGE: ${{ inputs.base_image != '' && inputs.base_image || matrix.base_image }}
-            # Use 'my-python' tag on 'my' branch, otherwise use variant name
-            CUSTOM_TAGS: ${{ github.ref == 'refs/heads/my' && 'my-python' || matrix.variant }}
+            # Use branch-specific tag on 'my'/'openfeet' branches, otherwise use variant name
+            CUSTOM_TAGS: ${{ github.ref == 'refs/heads/my' && 'my-python' || github.ref == 'refs/heads/openfeet' && 'openfeet-python' || matrix.variant }}
             VARIANT: ${{ matrix.variant }}
             ARCH: ${{ matrix.arch }}
             TARGET: binary
@@ -282,6 +282,15 @@ jobs:
                   echo "Adding simple tag: $TARGET_TAG from $SOURCE_TAG"
                   docker buildx imagetools create -t "$TARGET_TAG" "$SOURCE_TAG"
 
+            - name: Add simple tag for openfeet branch
+              if: github.ref == 'refs/heads/openfeet'
+              run: |
+                  # Get the first tag from the build (e.g., ghcr.io/gpothier/agent-server:abc123-openfeet-python-amd64)
+                  SOURCE_TAG=$(echo "${{ steps.prep.outputs.tags }}" | cut -d',' -f1)
+                  TARGET_TAG="${{ env.IMAGE }}:openfeet-python"
+                  echo "Adding simple tag: $TARGET_TAG from $SOURCE_TAG"
+                  docker buildx imagetools create -t "$TARGET_TAG" "$SOURCE_TAG"
+
             - name: Summary (${{ matrix.variant }}-${{ matrix.arch }}) - outputs
               run: |
                   echo "Image: ${{ env.IMAGE }}"
@@ -318,9 +327,10 @@ jobs:
     merge-manifests:
         name: Merge Multi-Arch Manifests
         needs: build-and-push-image
-        # Skip on 'my' branch (only single-arch python build)
+        # Skip on 'my'/'openfeet' branches (only single-arch python build)
         if: >
             github.ref != 'refs/heads/my' &&
+            github.ref != 'refs/heads/openfeet' &&
             (github.event_name == 'push' ||
              (github.event_name == 'pull_request' &&
               !github.event.pull_request.head.repo.fork))
