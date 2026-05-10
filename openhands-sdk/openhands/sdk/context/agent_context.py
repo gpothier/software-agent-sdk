@@ -317,14 +317,22 @@ class AgentContext(BaseModel):
         - Legacy with trigger=None: Full content in <REPO_CONTEXT> (always active)
         - Legacy with triggers: Listed in <available_skills>, injected on trigger
         """
-        repo_skills_raw, available_skills = self._partition_skills()
-        # Re-read content from disk on each turn; drop skills whose file is gone
         repo_skills: list[Skill] = []
-        for s in repo_skills_raw:
-            content = _read_skill_content(s)
-            if content is None:
-                continue
-            repo_skills.append(s.model_copy(update={"content": content}))
+        available_skills: list[Skill] = []
+
+        for s in self.skills:
+            if s.is_agentskills_format:
+                # Discoverable: listed in <available_skills>, content not in prompt
+                available_skills.append(s)
+            else:
+                # Active (always-on or promoted): inject content into system prompt.
+                # is_agentskills_format=False is the sole discriminator for "active";
+                # the trigger may be non-None for skills promoted via promote_skill()
+                # (trigger is preserved so keyword re-activation works after demotion).
+                content = _read_skill_content(s)
+                if content is None:
+                    continue
+                repo_skills.append(s.model_copy(update={"content": content}))
 
         # Gate vendor-specific repo skills based on model family.
         if llm_model or llm_model_canonical:

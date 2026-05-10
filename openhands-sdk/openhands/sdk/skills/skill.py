@@ -1437,7 +1437,10 @@ def to_prompt(skills: list[Skill], max_description_length: int = 1024) -> str:
 
 
 def promote_skill(agent_context: "AgentContext", name: str) -> bool:
-    """Promote a skill from discovered (agentskills-format) to active (trigger=None).
+    """Promote a skill from discovered (agentskills-format) to active.
+
+    Sets is_agentskills_format=False.  The trigger is intentionally preserved so
+    that keyword matching still works after a promote→demote→promote cycle.
 
     Operates in-place on agent_context.skills. Returns True if the skill was found
     and promoted, False if not found or already active.
@@ -1449,7 +1452,7 @@ def promote_skill(agent_context: "AgentContext", name: str) -> bool:
     for i, skill in enumerate(agent_context.skills):
         if skill.name == name and skill.is_agentskills_format:
             agent_context.skills[i] = skill.model_copy(
-                update={"is_agentskills_format": False, "trigger": None, "content": ""}
+                update={"is_agentskills_format": False, "content": ""}
             )
             return True
     return False

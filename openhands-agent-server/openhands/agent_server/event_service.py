@@ -1271,6 +1271,10 @@ class EventService:
 
         Returns a list of dicts with keys: name, source, description, always,
         triggers, state ("active" | "discovered").
+
+        Keyword-activated skills (present in activated_knowledge_skills from the
+        live conversation state) are returned as "active" so the Context pane
+        reflects that the skill's content was injected into the user turn.
         """
         from openhands.sdk.skills import SkillInfo
 
@@ -1278,9 +1282,17 @@ class EventService:
         if ctx is None:
             return []
 
+        keyword_activated: set[str] = set()
+        if self._conversation is not None:
+            keyword_activated = set(self._conversation._state.activated_knowledge_skills)
+
         result = []
         for s in ctx.skills:
-            if not s.is_agentskills_format and s.trigger is None:
+            # is_agentskills_format=False means the skill was either always-on
+            # (AGENTS.md / always: true) or manually promoted via activate_skill().
+            # Triggers are preserved through promote/demote cycles so we must not
+            # require trigger is None here.
+            if not s.is_agentskills_format or s.name in keyword_activated:
                 state = "active"
             else:
                 state = "discovered"
@@ -1310,18 +1322,46 @@ class EventService:
     async def deactivate_skill(self, name: str):
         """Demote an active skill back to discovered.
 
-        Returns the updated SkillInfo dict on success, None if not found or always-on.
+        Returns the updated SkillInfo dict on success, None if not found, always-on,
+        or already fully discovered (not promoted and not keyword-activated).
+
+        Two paths to "active":
+        - Manually promoted (is_agentskills_format=False): demote_skill() handles it.
+        - Keyword-activated (is_agentskills_format=True but in activated_knowledge_skills):
+          demote_skill() is a no-op; we just clear activated_knowledge_skills.
         """
         from openhands.sdk.skills.skill import demote_skill
 
         ctx = self._get_agent_context()
         if ctx is None:
             return None
-        if not demote_skill(ctx, name):
-            return None
-        stored_ctx = self.stored.agent.agent_context
-        if stored_ctx is not None:
-            demote_skill(stored_ctx, name)
+
+        skill = next((s for s in ctx.skills if s.name == name), None)
+        if skill is None or skill.always:
+            return None  # Not found or always-on
+
+        # Check keyword-activated state before attempting demotion
+        keyword_activated = False
+        if self._conversation is not None:
+            keyword_activated = name in self._conversation._state.activated_knowledge_skills
+
+        demoted = demote_skill(ctx, name)
+        if not demoted and not keyword_activated:
+            return None  # Already fully discovered — nothing to do
+
+        if demoted:
+            stored_ctx = self.stored.agent.agent_context
+            if stored_ctx is not None:
+                demote_skill(stored_ctx, name)
+
+        # Remove from activated_knowledge_skills so the keyword trigger can re-fire.
+        if self._conversation is not None:
+            try:
+                self._conversation._state.activated_knowledge_skills.remove(name)
+            except ValueError:
+                pass  # Not present — fine
+
         await self.save_meta()
+        # Re-fetch skill after possible in-place mutation
         skill = next((s for s in ctx.skills if s.name == name), None)
         return skill.to_skill_info() if skill else None
