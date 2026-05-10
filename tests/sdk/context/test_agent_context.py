@@ -1098,6 +1098,72 @@ templates.",
         assert "<CURRENT_DATETIME>" in result
         assert "The current date and time is: 2024-03-15T14:30:00" in result
 
+    def test_get_user_message_suffix_reads_content_from_disk_when_empty(self, tmp_path):
+        """Skills with empty content but a valid source path are read from disk on trigger.
+
+        This is the OpenFeet case: the server sends skills with content="" to avoid
+        transferring large files at conversation-creation time. The keyword match must
+        still inject the full file content into the user message.
+        """
+        skill_file = tmp_path / "write-behavior-test" / "SKILL.md"
+        skill_file.parent.mkdir()
+        skill_content = "Always write comprehensive tests for every code change."
+        skill_file.write_text(skill_content, encoding="utf-8")
+
+        skill = Skill(
+            name="write-behavior-test",
+            content="",  # empty — as sent by OpenFeet
+            source=str(skill_file),
+            trigger=KeywordTrigger(keywords=["write behavior test", "/write-behavior-test"]),
+            is_agentskills_format=True,
+        )
+        context = AgentContext(skills=[skill])
+        user_message = Message(
+            role="user",
+            content=[TextContent(text="Please /write-behavior-test for the new feature")],
+        )
+        result = context.get_user_message_suffix(user_message, [])
+
+        assert result is not None
+        text_content, triggered_names = result
+        assert "write-behavior-test" in triggered_names
+        assert skill_content in text_content.text
+        assert "<EXTRA_INFO>" in text_content.text
+
+    def test_get_user_message_suffix_skips_skill_when_content_and_source_both_absent(self):
+        """A skill with empty content and no source path produces no output on trigger."""
+        skill = Skill(
+            name="empty-skill",
+            content="",
+            source=None,
+            trigger=KeywordTrigger(keywords=["empty"]),
+        )
+        context = AgentContext(skills=[skill])
+        user_message = Message(
+            role="user",
+            content=[TextContent(text="This message contains the word empty")],
+        )
+        result = context.get_user_message_suffix(user_message, [])
+
+        assert result is None
+
+    def test_get_user_message_suffix_skips_skill_when_source_file_missing(self, tmp_path):
+        """A skill with empty content and a missing source file is silently skipped."""
+        skill = Skill(
+            name="gone-skill",
+            content="",
+            source=str(tmp_path / "nonexistent" / "SKILL.md"),
+            trigger=KeywordTrigger(keywords=["gone"]),
+        )
+        context = AgentContext(skills=[skill])
+        user_message = Message(
+            role="user",
+            content=[TextContent(text="The file is gone")],
+        )
+        result = context.get_user_message_suffix(user_message, [])
+
+        assert result is None
+
 
 def test_agent_context_secrets_raw_strings_redacted_by_default():
     context = AgentContext(secrets={"GITHUB_TOKEN": "ghp_real_secret"})

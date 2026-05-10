@@ -478,11 +478,21 @@ class AgentContext(BaseModel):
                     skill.name,
                     trigger,
                 )
+                # Use in-memory content when present; fall back to disk when empty.
+                # Skills arriving from a remote server (e.g. OpenFeet) carry
+                # content="" to avoid transferring large files at conversation-
+                # creation time, so we read from source here (mirrors the pattern
+                # in build_system_prompt for active skills).
+                content = skill.content
+                if not content:
+                    content = _read_skill_content(skill)
+                if not content:
+                    continue
                 recalled_knowledge.append(
                     SkillKnowledge(
                         name=skill.name,
                         trigger=trigger,
-                        content=skill.content,
+                        content=content,
                         location=skill.source,
                     )
                 )
