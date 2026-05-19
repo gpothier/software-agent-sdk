@@ -736,9 +736,8 @@ class LocalConversation(BaseConversation):
             # preventing a ValueError when e.g. agent and condenser LLMs were
             # both serialised with usage_id="default".
             self.llm_registry.subscribe(self._state.stats.register_llm)
-            registered = set(self.llm_registry.list_usage_ids())
             for llm in list(self.agent.get_all_llms()):
-                if llm.usage_id not in registered:
+                if llm.usage_id not in self.llm_registry.usage_to_llm:
                     self.llm_registry.add(llm)
                     registered.add(llm.usage_id)
                 self._pin_session_affinity_header(llm)

@@ -11,6 +11,7 @@ Usage:
 
 import logging
 import os
+import sys
 from logging.handlers import TimedRotatingFileHandler
 
 import litellm
@@ -130,9 +131,13 @@ def setup_logging(
             )
             root.addHandler(ch)
         else:
-            # Rich console handler
+            # Rich console handler.
+            # In non-TTY environments (Docker, journald) Rich falls back to 80
+            # columns, producing truncated box-drawing output. Use COLUMNS if set,
+            # or a wide default so the output is readable in log aggregators.
+            _width = int(os.environ.get("COLUMNS", "200")) if not sys.stderr.isatty() else None
             rich_handler = RichHandler(
-                console=Console(stderr=True),
+                console=Console(stderr=True, width=_width),
                 omit_repeated_times=False,
                 rich_tracebacks=ENV_RICH_TRACEBACKS,
             )
