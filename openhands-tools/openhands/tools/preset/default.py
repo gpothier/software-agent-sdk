@@ -20,12 +20,14 @@ def register_default_tools(enable_browser: bool = True) -> None:
     """Register the default set of tools."""
     # Tools are now automatically registered when imported
     from openhands.tools.file_editor import FileEditorTool
+    from openhands.tools.parallel_tasks import ParallelTasksToolSet
     from openhands.tools.task_tracker import TaskTrackerTool
     from openhands.tools.terminal import TerminalTool
 
     logger.debug(f"Tool: {TerminalTool.name} registered.")
     logger.debug(f"Tool: {FileEditorTool.name} registered.")
     logger.debug(f"Tool: {TaskTrackerTool.name} registered.")
+    logger.debug(f"Tool: {ParallelTasksToolSet.name} registered.")
 
     if enable_browser:
         from openhands.tools.browser_use import BrowserToolSet
@@ -61,9 +63,9 @@ def get_default_tools(
 
         tools.append(Tool(name=BrowserToolSet.name))
     if enable_sub_agents:
-        from openhands.tools.task import TaskToolSet
+        from openhands.tools.parallel_tasks import ParallelTasksToolSet
 
-        tools.append(Tool(name=TaskToolSet.name))
+        tools.append(Tool(name=ParallelTasksToolSet.name))
     return tools
 
 
