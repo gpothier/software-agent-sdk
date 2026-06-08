@@ -803,6 +803,28 @@ class Agent(CriticMixin, ResponseDispatchMixin, AgentBase):
 
         _messages = _messages_or_condensation
 
+        # Discover any skills added to the workspace since the last turn (e.g. by
+        # the agent cloning a new git repo).  New skills are appended to
+        # agent_context.skills and a SkillsUpdatedEvent is emitted when found.
+        # This runs before the dynamic context patch so newly-added skills appear
+        # in the system prompt for the current LLM call.
+        working_dir = getattr(getattr(state, "workspace", None), "working_dir", None)
+        if working_dir:
+            self._refresh_discovered_skills(working_dir, on_event)
+
+        # Re-evaluate dynamic context every turn so that skill activations and
+        # deactivations (which mutate agent_context.skills in-place) take effect
+        # for the current LLM call without requiring a new conversation.
+        if _messages and _messages[0].role == "system":
+            fresh_dynamic = self.get_dynamic_context(state)
+            static_block = _messages[0].content[0]  # system_prompt.text (cacheable)
+            _messages[0] = Message(
+                role="system",
+                content=[static_block, TextContent(text=fresh_dynamic)]
+                if fresh_dynamic
+                else [static_block],
+            )
+
         logger.debug(
             "Sending messages to LLM: "
             f"{json.dumps([m.model_dump() for m in _messages[1:]], indent=2)}"
