@@ -105,6 +105,7 @@ class LocalConversation(BaseConversation):
     _state: ConversationState
     _visualizer: ConversationVisualizerBase | None
     _on_event: ConversationCallbackType
+    _passthrough_callback: ConversationCallbackType
     _on_token: ConversationTokenCallbackType | None
     max_iteration_per_run: int
     _stuck_detector: StuckDetector | None
@@ -270,6 +271,14 @@ class LocalConversation(BaseConversation):
         else:
             # No visualization (visualizer is None)
             self._visualizer = None
+
+        # Passthrough callback: visualizer + user callbacks, but NOT _default_callback.
+        # Used by emit_passthrough_event() to broadcast sub-task events to WebSocket
+        # subscribers without appending them to state.events.
+        passthrough_list = [cb for cb in composed_list if cb is not _default_callback]
+        self._passthrough_callback = BaseConversation.compose_callbacks(
+            passthrough_list
+        )
 
         # Compose the base callback chain (visualizer -> user callbacks -> default)
         base_callback = BaseConversation.compose_callbacks(composed_list)
@@ -895,6 +904,17 @@ class LocalConversation(BaseConversation):
                 **self._state.agent_state,
                 "acp_current_model_id": model,
             }
+
+    def emit_passthrough_event(self, event: Event) -> None:
+        """Forward a sub-task event to WebSocket subscribers without recording it
+        in state.events.
+
+        Called by ParallelTasksExecutor to broadcast sub-agent events to the
+        parent conversation's WebSocket subscribers so clients can render the
+        sub-task event stream in real time.  The event is tagged with
+        parent_event_id and task_index by the caller before passing it here.
+        """
+        self._passthrough_callback(event)
 
     @observe(name="conversation.send_message")
     def send_message(
