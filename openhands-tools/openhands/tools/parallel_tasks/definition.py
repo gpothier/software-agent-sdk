@@ -148,23 +148,24 @@ class ParallelTasksObservation(Observation):
 # Tool description
 # ---------------------------------------------------------------------------
 
-PARALLEL_TASKS_DESCRIPTION: Final[str] = """Run multiple subagents in parallel, each handling an independent sub-task.
+PARALLEL_TASKS_DESCRIPTION: Final[str] = """Run one or more sub-tasks via subagents, each running a cheaper model.
 
-Use this tool to delegate one or more sub-tasks to subagents running a cheaper model.
+Use this tool whenever it is cheaper or cleaner to hand off work to a subagent — not only for parallelism. A single-task invocation is perfectly valid when you just want to delegate a bounded piece of work.
 
 Available agent types and the tools they have access to:
 {agent_types_info}
 
 `shared_context` is a list of strings injected into every subagent's system prompt before the agent definition's own instructions. Each item is either a literal string or a path prefixed with `@` (e.g. `@/workspace/src/utils.py`), which is read from disk at execution time. Use `@path` items to share large or stable content — files to be edited, coding conventions, architectural constraints — without re-generating those tokens in every task prompt. All subagents share this prefix, so prompt-cache hits apply from the second subagent onwards.
 
-Each task's `prompt` is the user message sent to start that subagent's conversation. Keep it short: the shared context already sets the scene.
+Each task's `prompt` is the user message sent to start that subagent's conversation. Keep it short: the shared context already sets the scene. Always end the prompt with an explicit abort instruction, for example: *"If you cannot complete this task with the information provided, call `finish` immediately with a clear error message — do not guess, do not ask follow-up questions."* Subagents have no way to ask the parent agent for clarification, so it is critical that they fail loudly rather than silently proceeding with wrong assumptions.
 
 If `reduce` is provided, a single additional subagent runs after all tasks finish. It receives the same `shared_context` in its system prompt and all task results prepended to its `prompt`. Use it to merge, rank, or summarise the parallel outputs.
 
-Note: tasks in `parallel_tasks` run concurrently — do not use it when each step depends on the previous result.
+Note: tasks run concurrently — do not use multiple tasks when each step depends on the previous result. A single-task call is fine for any bounded sequential workflow.
 
 When to use `parallel_tasks`:
-- The sub-task warrants a cheaper or fresher-context model — delegate even a single task
+- The sub-task can be fully specified up front and warrants a cheaper model — delegate even a single task
+- A bounded multi-step sequence that you want to hand off entirely: e.g. stage files → commit → push, or a multi-step docker build
 - Applying a consistent change across several independent files simultaneously
 - Running parallel investigations whose results will be merged at the end
 
@@ -173,11 +174,36 @@ When to use `parallel_tasks`:
 
 PARALLEL_TASKS_EXAMPLES: Final[dict[str, str]] = {
     "general-purpose": """
+Example — Delegate a git commit + push (single task, sequential steps):
+    description="Commit and push changes"
+    shared_context=[
+        "Working directory: /workspace/myproject  (already on branch 'feature/my-change'). "
+        "Stage all modified files, commit with the message 'feat: add retry logic', then push. "
+        "If you cannot complete this task with the information provided, call `finish` with a "
+        "clear error message — do not guess, do not ask follow-up questions.",
+    ]
+    tasks=[
+        TaskSpec(prompt="Stage, commit, and push.", subagent_type="general-purpose", description="git commit+push"),
+    ]
+
+Example — Delegate a Docker image build (single task, multi-step):
+    description="Build production image"
+    shared_context=[
+        "Repository root: /workspace/myproject. Build the Docker image with: "
+        "`docker build -f Dockerfile.prod -t myapp:latest .` from that directory. "
+        "If the build fails, call `finish` immediately with the error output — do not attempt fixes.",
+    ]
+    tasks=[
+        TaskSpec(prompt="Run the Docker build and report the outcome.", subagent_type="general-purpose", description="docker build"),
+    ]
+
 Example — Apply a rename across multiple independent files:
     description="Rename fetchData → retrieveInformation"
     shared_context=[
         "Rename the function `fetchData` to `retrieveInformation` everywhere in the assigned "
-        "file. Update all call sites, type annotations, and JSDoc. Do not change behaviour.",
+        "file. Update all call sites, type annotations, and JSDoc. Do not change behaviour. "
+        "If you cannot complete this task with the information provided, call `finish` with a "
+        "clear error message — do not guess, do not ask follow-up questions.",
         "@/workspace/src/api/types.ts",
     ]
     tasks=[
@@ -192,7 +218,8 @@ Example — Audit several files then summarise findings:
     shared_context=[
         "Audit the assigned file for unhandled promise rejections and silent catch blocks. "
         "Report each as: file path, line number, code snippet, severity (high/medium/low). "
-        "Make no changes.",
+        "Make no changes. If you cannot complete this task with the information provided, "
+        "call `finish` with a clear error message — do not guess, do not ask follow-up questions.",
     ]
     tasks=[
         TaskSpec(prompt="Audit src/auth/login.ts",        subagent_type="code-explorer", description="auth"),
