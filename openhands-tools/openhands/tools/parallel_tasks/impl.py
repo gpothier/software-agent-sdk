@@ -89,7 +89,7 @@ class ParallelTasksExecutor(ToolExecutor):
         results: dict[int, str] = {}
         errors: dict[int, str] = {}
         max_workers = min(action.max_concurrency, len(action.tasks))
-        parent_event_id = action.id
+        parent_event_id = action.action_id
 
         with ThreadPoolExecutor(
             max_workers=max_workers, thread_name_prefix="parallel_tasks"

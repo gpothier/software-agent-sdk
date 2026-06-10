@@ -13,6 +13,7 @@ parallel agents, and optionally runs a reduce step after they all finish.
 
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Final
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 from pydantic.json_schema import SkipJsonSchema
@@ -101,6 +102,12 @@ class ParallelTasksAction(Action):
         default=4,
         ge=1,
         description="Maximum number of tasks to run concurrently.",
+    )
+    # Unique ID for this invocation; generated at parse time, not part of
+    # the LLM-facing schema. Serialized in the ActionEvent so the backend
+    # can use it as the parent_event_id for sub-task events.
+    action_id: SkipJsonSchema[str] = Field(
+        default_factory=lambda: str(uuid4()),
     )
 
 
