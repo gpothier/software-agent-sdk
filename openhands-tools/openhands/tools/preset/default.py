@@ -29,6 +29,10 @@ def register_default_tools(enable_browser: bool = True) -> None:
     logger.debug(f"Tool: {TaskTrackerTool.name} registered.")
     logger.debug(f"Tool: {ParallelTasksToolSet.name} registered.")
 
+    from openhands.tools.tavily_search import TavilySearchTool
+
+    logger.debug(f"Tool: {TavilySearchTool.name} registered.")
+
     if enable_browser:
         from openhands.tools.browser_use import BrowserToolSet
 
@@ -66,6 +70,11 @@ def get_default_tools(
         from openhands.tools.parallel_tasks import ParallelTasksToolSet
 
         tools.append(Tool(name=ParallelTasksToolSet.name))
+
+    from openhands.tools.tavily_search import TavilySearchTool
+
+    if TavilySearchTool.is_usable():
+        tools.append(Tool(name=TavilySearchTool.name))
     return tools
 
 
