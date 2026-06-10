@@ -318,9 +318,11 @@ class TaskManager:
         """Create a sub-agent from an AgentFactory."""
         parent = self.parent_conversation
         parent_llm = parent.agent.llm
+        # Use subagent_llm override when set; otherwise copy the parent LLM.
+        base_llm = getattr(parent.agent, "subagent_llm", None) or parent_llm
 
         llm_updates: dict = {"stream": False}
-        sub_agent_llm = parent_llm.model_copy(update=llm_updates)
+        sub_agent_llm = base_llm.model_copy(update=llm_updates)
         # Reset metrics such that the sub-agent has its own
         # Metrics object
         sub_agent_llm.reset_metrics()

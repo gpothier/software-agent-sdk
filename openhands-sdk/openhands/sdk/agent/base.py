@@ -403,6 +403,16 @@ class AgentBase(DiscriminatedUnionMixin, ABC):
             "and working directory, so mutations to shared state may race."
         ),
     )
+    subagent_llm: LLM | None = Field(
+        default=None,
+        description=(
+            "Optional LLM to use for sub-agents spawned by this agent (e.g. via "
+            "the parallel_tasks tool). When set, sub-agents use this LLM instead "
+            "of inheriting the parent agent's LLM. Allows routing sub-agent calls "
+            "to a cheaper or faster model while keeping a more capable model for "
+            "the main agent."
+        ),
+    )
 
     # Runtime materialized tools; private and non-serializable
     _tools: dict[str, ToolDefinition] = PrivateAttr(default_factory=dict)

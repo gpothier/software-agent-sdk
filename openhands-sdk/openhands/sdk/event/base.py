@@ -30,6 +30,14 @@ class Event(DiscriminatedUnionMixin, ABC):
         description="Event timestamp (UTC)",
     )
     source: SourceType = Field(..., description="The source of this event")
+    parent_event_id: str | None = Field(
+        default=None,
+        description="_id of the parent parallel_tasks tool-call doc (sub-task only)",
+    )
+    task_index: int | None = Field(
+        default=None,
+        description="Zero-based task index; len(tasks) for the reduce step",
+    )
 
     @property
     def visualize(self) -> Text:
