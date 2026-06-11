@@ -113,7 +113,17 @@ class StartConversationRequest(BaseModel):
             "Historical messages to pre-load before the conversation starts. "
             "Unlike initial_message, these are injected directly into conversation "
             "state without triggering the agent loop. Both 'user' and 'assistant' "
-            "roles are accepted."
+            "roles are accepted. Superseded by initial_events when both are provided."
+        ),
+    )
+    initial_events: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "Full event stream to pre-load as raw SDK event JSON dicts. "
+            "Supports MessageEvent, Condensation, and other LLMConvertibleEvent types. "
+            "When provided, initial_messages is ignored. Events are applied in order; "
+            "Condensation events are honored so prior condensations are replayed without "
+            "calling the LLM."
         ),
     )
     max_iterations: int = Field(

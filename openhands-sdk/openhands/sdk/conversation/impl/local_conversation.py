@@ -1017,6 +1017,29 @@ class LocalConversation(BaseConversation):
                     self._state.last_user_message_id = event.id
             self._state.rebuild_view()
 
+    def load_events_from_raw(self, raw_events: list[dict[str, Any]]) -> None:
+        """Inject raw SDK event dicts directly into conversation state.
+
+        Deserializes each dict into the appropriate event type (MessageEvent,
+        Condensation, etc.) and appends it. Condensation events are applied
+        through rebuild_view() so prior condensations are replayed without
+        re-calling the LLM. Unknown or malformed events are skipped.
+        """
+        with self._state:
+            for raw in raw_events:
+                kind = raw.get("kind", "")
+                if kind not in ("MessageEvent", "Condensation"):
+                    continue  # only replay events meaningful to LLM context
+                try:
+                    event: Event = Event.model_validate(raw)
+                except Exception as exc:
+                    logger.warning(f"load_events_from_raw: skipping {kind!r} — {exc}")
+                    continue
+                self._state.events.append(event)
+                if isinstance(event, MessageEvent) and event.source == "user":
+                    self._state.last_user_message_id = event.id
+            self._state.rebuild_view()
+
     def _on_event_with_state_lock(self, event: Event) -> None:
         """Emit an event while holding the conversation state lock."""
         with self._state:

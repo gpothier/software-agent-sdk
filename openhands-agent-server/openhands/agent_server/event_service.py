@@ -507,6 +507,20 @@ class EventService:
             None, self._conversation.load_history, messages
         )
 
+    async def load_events_from_raw(self, raw_events: list[dict]) -> None:
+        """Inject raw SDK event dicts directly into conversation state.
+
+        Supersedes load_history() — supports MessageEvent, Condensation, and any
+        other LLMConvertibleEvent type. Condensation events are replayed in-place
+        so prior condensations are restored without re-calling the LLM.
+        """
+        if not self._conversation:
+            raise ValueError("inactive_service")
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None, self._conversation.load_events_from_raw, raw_events
+        )
+
     def _mark_running_acp_prompt_superseded_sync(self) -> tuple[bool, bool]:
         """Mark the currently running ACP prompt superseded if needed.
 
