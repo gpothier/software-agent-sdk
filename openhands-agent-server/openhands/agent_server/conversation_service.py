@@ -674,6 +674,12 @@ class ConversationService:
         else:
             stored = StoredConversation(id=conversation_id, **request_data)
         event_service = await self._start_event_service(stored)
+        if request.initial_messages:
+            history = [
+                (req.create_message(), req.event_id)
+                for req in request.initial_messages
+            ]
+            await event_service.load_history(history)
         initial_message = request.initial_message
         if initial_message:
             message = Message(

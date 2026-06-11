@@ -107,6 +107,15 @@ class StartConversationRequest(BaseModel):
     initial_message: SendMessageRequest | None = Field(
         default=None, description="Initial message to pass to the LLM"
     )
+    initial_messages: list[SendMessageRequest] = Field(
+        default_factory=list,
+        description=(
+            "Historical messages to pre-load before the conversation starts. "
+            "Unlike initial_message, these are injected directly into conversation "
+            "state without triggering the agent loop. Both 'user' and 'assistant' "
+            "roles are accepted."
+        ),
+    )
     max_iterations: int = Field(
         default=500,
         ge=1,

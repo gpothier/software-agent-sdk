@@ -493,6 +493,20 @@ class EventService:
                     if interrupted_acp:
                         self._acp_internal_rerun_requested = True
 
+    async def load_history(self, messages: list[tuple[Message, str | None]]) -> None:
+        """Inject historical messages directly into conversation state.
+
+        Unlike send_message(), accepts both 'user' and 'assistant' role messages
+        without triggering the agent loop. Used to restore conversation context
+        after a sandbox restart.
+        """
+        if not self._conversation:
+            raise ValueError("inactive_service")
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None, self._conversation.load_history, messages
+        )
+
     def _mark_running_acp_prompt_superseded_sync(self) -> tuple[bool, bool]:
         """Mark the currently running ACP prompt superseded if needed.
 

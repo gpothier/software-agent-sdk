@@ -995,6 +995,28 @@ class LocalConversation(BaseConversation):
             user_msg_event = MessageEvent(**event_kwargs)
             self._on_event(user_msg_event)
 
+    def load_history(self, messages: list[tuple[Message, str | None]]) -> None:
+        """Inject historical messages directly into conversation state.
+
+        Unlike send_message(), accepts both 'user' and 'assistant' role messages
+        without triggering the agent loop or event callbacks. Used to restore
+        conversation context after a sandbox restart.
+        """
+        with self._state:
+            for message, event_id in messages:
+                source = "user" if message.role == "user" else "agent"
+                event_kwargs: dict[str, Any] = {
+                    "source": source,
+                    "llm_message": message,
+                }
+                if event_id is not None:
+                    event_kwargs["id"] = event_id
+                event = MessageEvent(**event_kwargs)
+                self._state.events.append(event)
+                if source == "user":
+                    self._state.last_user_message_id = event.id
+            self._state.rebuild_view()
+
     def _on_event_with_state_lock(self, event: Event) -> None:
         """Emit an event while holding the conversation state lock."""
         with self._state:
