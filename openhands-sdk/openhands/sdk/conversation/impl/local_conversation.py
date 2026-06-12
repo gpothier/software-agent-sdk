@@ -1002,6 +1002,13 @@ class LocalConversation(BaseConversation):
         without triggering the agent loop or event callbacks. Used to restore
         conversation context after a sandbox restart.
         """
+        # Initialise the agent (adds SystemPromptEvent) BEFORE injecting history
+        # so init_state()'s prefix check — "no user message before SystemPromptEvent"
+        # — passes when send_message() is later called on this conversation.
+        # This mirrors the call site in send_message() itself.
+        if self._should_initialize_agent_on_send_message():
+            self._ensure_agent_ready()
+
         with self._state:
             for message, event_id in messages:
                 source = "user" if message.role == "user" else "agent"
@@ -1025,6 +1032,13 @@ class LocalConversation(BaseConversation):
         through rebuild_view() so prior condensations are replayed without
         re-calling the LLM. Unknown or malformed events are skipped.
         """
+        # Initialise the agent (adds SystemPromptEvent) BEFORE injecting history
+        # so init_state()'s prefix check — "no user message before SystemPromptEvent"
+        # — passes when send_message() is later called on this conversation.
+        # This mirrors the call site in send_message() itself.
+        if self._should_initialize_agent_on_send_message():
+            self._ensure_agent_ready()
+
         with self._state:
             for raw in raw_events:
                 kind = raw.get("kind", "")
