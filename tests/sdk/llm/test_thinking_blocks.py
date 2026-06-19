@@ -247,7 +247,7 @@ def test_message_serialization_without_thinking_blocks():
 
 
 def test_message_list_serializer_with_thinking_blocks():
-    """Test Message._list_serializer includes thinking blocks as separate field."""
+    """Test Message._list_serializer puts thinking blocks at start of content array."""
     thinking_block = ThinkingBlock(
         thinking="Let me think...",
         signature="sig_abc",
@@ -261,18 +261,16 @@ def test_message_list_serializer_with_thinking_blocks():
 
     serialized = message._list_serializer(vision_enabled=False)
 
-    # Thinking blocks should be in a separate field, not in content
-    assert "thinking_blocks" in serialized
-    assert len(serialized["thinking_blocks"]) == 1
-    assert serialized["thinking_blocks"][0]["type"] == "thinking"
-    assert serialized["thinking_blocks"][0]["thinking"] == "Let me think..."
-    assert serialized["thinking_blocks"][0]["signature"] == "sig_abc"
-
-    # Content should only have text content
+    # Thinking blocks must be in the content array (Anthropic wire format), not
+    # in a sibling key, so they are echoed back with their signatures intact.
+    assert "thinking_blocks" not in serialized
     content_list = serialized["content"]
-    assert len(content_list) == 1
-    assert content_list[0]["type"] == "text"
-    assert content_list[0]["text"] == "The answer is 42."
+    assert len(content_list) == 2
+    assert content_list[0]["type"] == "thinking"
+    assert content_list[0]["thinking"] == "Let me think..."
+    assert content_list[0]["signature"] == "sig_abc"
+    assert content_list[1]["type"] == "text"
+    assert content_list[1]["text"] == "The answer is 42."
 
 
 def test_message_event_thinking_blocks_property():
@@ -339,18 +337,15 @@ def test_multiple_thinking_blocks():
     assert message.thinking_blocks[1].thinking == "Second reasoning step"
     assert message.thinking_blocks[1].signature is not None
 
-    # Test serialization - thinking blocks should be in separate field
+    # Test serialization - thinking blocks should be first in content array
     serialized = message._list_serializer(vision_enabled=False)
 
-    # Verify thinking_blocks field
-    assert "thinking_blocks" in serialized
-    assert len(serialized["thinking_blocks"]) == 2
-    assert all(item["type"] == "thinking" for item in serialized["thinking_blocks"])
-
-    # Verify content only has text
+    assert "thinking_blocks" not in serialized
     content_list = serialized["content"]
-    assert len(content_list) == 1
-    assert content_list[0]["type"] == "text"
+    assert len(content_list) == 3  # 2 thinking + 1 text
+    assert content_list[0]["type"] == "thinking"
+    assert content_list[1]["type"] == "thinking"
+    assert content_list[2]["type"] == "text"
 
 
 def test_llm_preserves_existing_thinking_blocks():
@@ -379,17 +374,16 @@ def test_llm_preserves_existing_thinking_blocks():
     # Format messages for LLM
     formatted_messages = llm.format_messages_for_llm(messages)
 
-    # Check that the existing thinking block is preserved in separate field
-    assert "thinking_blocks" in formatted_messages[0]
-    thinking_blocks = formatted_messages[0]["thinking_blocks"]
-
-    assert len(thinking_blocks) == 1
-    assert thinking_blocks[0]["thinking"] == "I already have a thinking block"
-    assert thinking_blocks[0]["signature"] == "existing_sig"
+    # Check that the existing thinking block is preserved at the start of content
+    assert "thinking_blocks" not in formatted_messages[0]
+    content_list = formatted_messages[0]["content"]
+    assert content_list[0]["type"] == "thinking"
+    assert content_list[0]["thinking"] == "I already have a thinking block"
+    assert content_list[0]["signature"] == "existing_sig"
 
 
 def test_thinking_blocks_in_message_dict():
-    """Test that thinking blocks are placed as a field in message_dict."""
+    """Test that thinking blocks are placed at the start of the content array."""
     thinking_block = ThinkingBlock(
         thinking="Analyzing the problem...",
         signature="sig_xyz",
@@ -404,25 +398,19 @@ def test_thinking_blocks_in_message_dict():
     # Test via _list_serializer
     message_dict = message._list_serializer(vision_enabled=False)
 
-    # Verify thinking_blocks is a top-level field in message_dict
-    assert "thinking_blocks" in message_dict
-    assert isinstance(message_dict["thinking_blocks"], list)
-    assert len(message_dict["thinking_blocks"]) == 1
-
-    # Verify structure of thinking block in message_dict
-    thinking_dict = message_dict["thinking_blocks"][0]
+    assert "thinking_blocks" not in message_dict
+    assert "content" in message_dict
+    content_list = message_dict["content"]
+    assert len(content_list) == 2  # thinking block first, then text
+    thinking_dict = content_list[0]
     assert thinking_dict["type"] == "thinking"
     assert thinking_dict["thinking"] == "Analyzing the problem..."
     assert thinking_dict["signature"] == "sig_xyz"
-
-    # Verify content is separate from thinking_blocks
-    assert "content" in message_dict
-    assert len(message_dict["content"]) == 1
-    assert message_dict["content"][0]["type"] == "text"
+    assert content_list[1]["type"] == "text"
 
 
 def test_thinking_blocks_in_message_dict_via_to_chat_dict():
-    """Test that thinking blocks are included when calling to_chat_dict."""
+    """Test that thinking blocks appear in content array when calling to_chat_dict."""
     thinking_block = ThinkingBlock(
         thinking="Step-by-step reasoning...",
         signature="sig_chat",
@@ -443,11 +431,11 @@ def test_thinking_blocks_in_message_dict_via_to_chat_dict():
         send_reasoning_content=False,
     )
 
-    # Verify thinking_blocks field exists
-    assert "thinking_blocks" in chat_dict
-    assert len(chat_dict["thinking_blocks"]) == 1
-    assert chat_dict["thinking_blocks"][0]["thinking"] == "Step-by-step reasoning..."
-    assert chat_dict["thinking_blocks"][0]["signature"] == "sig_chat"
+    assert "thinking_blocks" not in chat_dict
+    content_list = chat_dict["content"]
+    assert content_list[0]["type"] == "thinking"
+    assert content_list[0]["thinking"] == "Step-by-step reasoning..."
+    assert content_list[0]["signature"] == "sig_chat"
 
 
 def test_no_thinking_blocks_field_when_empty():
@@ -480,8 +468,11 @@ def test_thinking_blocks_only_for_assistant_role():
 
     user_dict = user_message._list_serializer(vision_enabled=False)
 
-    # Thinking blocks should not be added for non-assistant roles
+    # Thinking blocks must not appear in content for non-assistant roles
     assert "thinking_blocks" not in user_dict
+    assert not any(
+        item.get("type") == "thinking" for item in user_dict["content"]
+    )
 
     # Now test with assistant role
     assistant_message = Message(
@@ -492,9 +483,9 @@ def test_thinking_blocks_only_for_assistant_role():
 
     assistant_dict = assistant_message._list_serializer(vision_enabled=False)
 
-    # Thinking blocks should be added for assistant role
-    assert "thinking_blocks" in assistant_dict
-    assert len(assistant_dict["thinking_blocks"]) == 1
+    # Thinking blocks should be first in content for assistant role
+    assert "thinking_blocks" not in assistant_dict
+    assert assistant_dict["content"][0]["type"] == "thinking"
 
 
 def test_redacted_thinking_block_in_message_dict():
@@ -513,11 +504,9 @@ def test_redacted_thinking_block_in_message_dict():
 
     message_dict = message._list_serializer(vision_enabled=False)
 
-    # Verify redacted thinking block is in message_dict
-    assert "thinking_blocks" in message_dict
-    assert len(message_dict["thinking_blocks"]) == 1
-    assert message_dict["thinking_blocks"][0]["type"] == "redacted_thinking"
-    assert message_dict["thinking_blocks"][0]["data"] == "[REDACTED]"
+    assert "thinking_blocks" not in message_dict
+    assert message_dict["content"][0]["type"] == "redacted_thinking"
+    assert message_dict["content"][0]["data"] == "[REDACTED]"
 
 
 def test_mixed_thinking_and_redacted_blocks():
@@ -538,8 +527,7 @@ def test_mixed_thinking_and_redacted_blocks():
 
     message_dict = message._list_serializer(vision_enabled=False)
 
-    # Verify both types are in message_dict
-    assert "thinking_blocks" in message_dict
-    assert len(message_dict["thinking_blocks"]) == 2
-    assert message_dict["thinking_blocks"][0]["type"] == "thinking"
-    assert message_dict["thinking_blocks"][1]["type"] == "redacted_thinking"
+    assert "thinking_blocks" not in message_dict
+    content_list = message_dict["content"]
+    assert content_list[0]["type"] == "thinking"
+    assert content_list[1]["type"] == "redacted_thinking"

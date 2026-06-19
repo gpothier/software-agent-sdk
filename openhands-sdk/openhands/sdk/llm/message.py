@@ -341,8 +341,8 @@ class Message(BaseModel):
         content: list[dict[str, Any]] = []
         role_tool_with_prompt_caching = False
 
-        # Add thinking blocks first (for Anthropic extended thinking)
-        # Only add thinking blocks for assistant messages
+        # Collect thinking blocks for assistant messages only; prepended to
+        # content below so they appear before tool-use blocks in the array.
         thinking_blocks_dicts = []
         if self.role == "assistant":
             thinking_blocks = list(
@@ -377,12 +377,15 @@ class Message(BaseModel):
                 # Add non-image content (TextContent, etc.)
                 content.extend(item_dicts)
 
+        # Thinking blocks must precede other content blocks (Anthropic wire format
+        # requires them at the start of the content array so they are echoed back
+        # with their cryptographic signatures intact on every subsequent turn).
+        if thinking_blocks_dicts:
+            content = thinking_blocks_dicts + content
+
         message_dict: dict[str, Any] = {"content": content, "role": self.role}
         if role_tool_with_prompt_caching:
             message_dict["cache_control"] = {"type": "ephemeral"}
-
-        if thinking_blocks_dicts:
-            message_dict["thinking_blocks"] = thinking_blocks_dicts
 
         # tool call keys are added in to_chat_dict to centralize behavior
         return message_dict
