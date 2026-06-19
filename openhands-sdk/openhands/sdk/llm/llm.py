@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import os
@@ -764,8 +765,6 @@ class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
         offloaded to a thread via :func:`asyncio.loop.run_in_executor` to
         avoid blocking the event loop.
         """
-        import asyncio
-
         assert self._telemetry is not None
         self._telemetry.on_error(error)
         if self.fallback_strategy and self.fallback_strategy.should_fallback(error):
@@ -1771,11 +1770,32 @@ class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
     ) -> ModelResponse:
         """Async variant of :meth:`_transport_call`."""
         with self._transport_ctx():
-            ret = await litellm_acompletion(
-                **self._prepare_transport_kwargs(
-                    messages=messages, enable_streaming=enable_streaming, **kwargs
+            # asyncio.wait_for enforces the deadline at the Python event-loop
+            # level, independently of httpx/litellm socket timeouts. This is
+            # necessary because a CLOSE-WAIT zombie connection (remote closed
+            # the TCP connection but Python never received the EOF event) can
+            # leave the awaiting coroutine suspended forever even when a
+            # lower-level timeout is configured.
+            try:
+                ret = await asyncio.wait_for(
+                    litellm_acompletion(
+                        **self._prepare_transport_kwargs(
+                            messages=messages,
+                            enable_streaming=enable_streaming,
+                            **kwargs,
+                        )
+                    ),
+                    timeout=self.timeout,
                 )
-            )
+            except asyncio.TimeoutError as e:
+                raise LiteLLMTimeout(
+                    message=(
+                        f"LLM call timed out after {self.timeout}s "
+                        "(asyncio deadline exceeded — connection may be zombie)"
+                    ),
+                    model=self.model,
+                    llm_provider="",
+                ) from e
             if enable_streaming and on_token is not None:
                 assert isinstance(ret, CustomStreamWrapper)
                 chunks: list[ModelResponseStream] = []
